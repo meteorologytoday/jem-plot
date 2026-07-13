@@ -1,0 +1,76 @@
+experiment:
+  name: long_run
+  description: "Long, low-frequency-output jem run (one snapshot per file, no real time coordinate)"
+
+# ── Data paths ───────────────────────────────────────────────────────────────
+data:
+  # Directory containing {component}-*.nc files (atm/ocn/fakelnd).
+  run_dir: data/long_run
+
+# ── Grid metadata ─────────────────────────────────────────────────────────────
+# Only the cartopy projection needs to be configured here — horizontal/
+# vertical dimension names and real-vs-synthetic coordinates are detected
+# automatically per variable (see jemdiag/grid.py).
+grids:
+  atm:
+    projection: PlateCarree
+  fakelnd:
+    projection: PlateCarree
+  # ocn is intentionally omitted: map_2d picks cartopy or a plain index-based
+  # fallback automatically depending on whether its coordinates are real.
+
+# ── Diagnostics ───────────────────────────────────────────────────────────────
+# Two-layer structure: component -> diag_type -> settings.
+# `time`/`level` accept "mean", an integer index, or a "start:end" slice
+# (averaged over the slice) -- jem runs have no calendar, so aggregation is
+# always over raw file/record index rather than season/month.
+diagnostics:
+  atm:
+    map_2d:
+      time: mean
+      level: mean
+      vars: [temperature, u_wind, v_wind, specific_humidity, shortwave_rad.rsds, surface_flux.tsfc]
+      # Optional per-variable overrides. Any key may be omitted to keep the
+      # automatic default (percentile-based color limits, DEFAULT_CMAPS entry
+      # or "viridis").
+      # var_opts:
+      #   temperature: {vmin: 200, vmax: 300}
+      #   u_wind: {symmetric: true}
+    zonal_section:
+      time: mean
+      invert_yaxis: false
+      vars: [temperature, u_wind]
+    profile:
+      time: mean
+      vars: [specific_humidity, temperature]
+    timeseries:
+      level: mean
+      vars: [surface_flux.tsfc, shortwave_rad.rsds]
+
+  ocn:
+    map_2d:
+      time: mean
+      level: mean
+      vars: [sea_surface_temperature]
+    zonal_section:
+      time: mean
+      invert_yaxis: true
+      vars: [temp, salt]
+    timeseries:
+      level: mean
+      vars: [sea_surface_temperature]
+
+  fakelnd:
+    map_2d:
+      time: mean
+      vars: [mixed_layer_depth]
+    timeseries:
+      vars: [mixed_layer_depth, total_heat_flux]
+
+# ── Output ────────────────────────────────────────────────────────────────────
+output:
+  base_dir: figures
+  # Final path: {base_dir}/{experiment.name}/{component}/{diag_type}/{variable}.png
+  format: png
+  dpi: 150
+  n_levels: 20  # number of discrete color levels in all map/zonal plots
