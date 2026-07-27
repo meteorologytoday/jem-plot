@@ -54,11 +54,18 @@ diagnostics:
       vars: [sea_surface_temperature]
     zonal_section:
       time: mean
-      invert_yaxis: true
+      # depth index 0 = seafloor, last index = surface (jem convention);
+      # invert_yaxis: false keeps the surface drawn at the top of the chart.
+      invert_yaxis: false
       vars: [temp, salt]
     timeseries:
       level: mean
       vars: [sea_surface_temperature]
+    overturning_streamfunction:
+      time: mean
+      invert_yaxis: false
+    heat_transport:
+      time: mean
 
   fakelnd:
     map_2d:

@@ -189,6 +189,67 @@ def zonal_section(
     _save(fig, output_path, dpi)
 
 
+def overturning_streamfunction(
+    psi: xr.DataArray,
+    y: np.ndarray,
+    z: np.ndarray,
+    y_label: str,
+    z_label: str,
+    title: str,
+    output_path: str | Path,
+    units: str = "Sv",
+    vmin: float | None = None,
+    vmax: float | None = None,
+    n_levels: int = 20,
+    invert_yaxis: bool = False,
+    dpi: int = 150,
+) -> None:
+    """
+    Save a meridional overturning streamfunction section (filled contours
+    plus contour lines, with the zero-transport line highlighted).
+
+    *psi* is expected to have dimensions ``(z, y)`` (vertical, meridional),
+    diverging around zero (positive/negative circulation cells).
+    """
+    values = np.asarray(psi)
+    vmin, vmax = _resolve_clim(values, vmin, vmax, symmetric=True)
+    cmap = "RdBu_r"
+    norm = _make_norm(cmap, vmin, vmax, n_levels)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    mesh = ax.pcolormesh(y, z, values, cmap=cmap, norm=norm, shading="auto")
+    levels = np.linspace(vmin, vmax, n_levels + 1)
+    ax.contour(y, z, values, levels=levels, colors="k", linewidths=0.4, alpha=0.6)
+    ax.contour(y, z, values, levels=[0.0], colors="k", linewidths=1.2)
+    if invert_yaxis:
+        ax.invert_yaxis()
+    ax.set_xlabel(y_label)
+    ax.set_ylabel(z_label)
+    _add_colorbar(fig, ax, mesh, units)
+    ax.set_title(title, fontsize=11)
+    _save(fig, output_path, dpi)
+
+
+def meridional_transport(
+    y: np.ndarray,
+    values: np.ndarray,
+    y_label: str,
+    title: str,
+    output_path: str | Path,
+    units: str = "",
+    dpi: int = 150,
+) -> None:
+    """Save a 1D meridional-transport line plot (value vs. latitude/y)."""
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(y, np.asarray(values), linewidth=1.5)
+    ax.axhline(0.0, color="k", linewidth=0.6)
+    ax.set_xlabel(y_label)
+    ax.set_ylabel(units or "transport")
+    ax.set_title(title, fontsize=11)
+    ax.grid(True, alpha=0.3)
+    _save(fig, output_path, dpi)
+
+
 def profile(
     data: xr.DataArray,
     z: np.ndarray,

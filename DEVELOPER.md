@@ -67,6 +67,45 @@ it's built the way it is. Not user-facing docs — see `README.md` for usage.
   be another place for it to go stale. `ocn.py`'s `_var_label` strips a
   redundant leading "ocean " from `long_name` (e.g. "ocean potential
   temperature") before prefixing "Ocean " in titles.
+- **`ocn`'s `depth` index runs seafloor → surface, not surface → seafloor.**
+  Confirmed on 2026-07-26 by comparing `temp`'s per-depth-index mean against
+  `sea_surface_temperature`: they match at the *last* depth index, and
+  `dzt` (layer thickness) decreases monotonically toward that same end
+  (690m at index 0 down to 50m at the last index) — thin surface layers,
+  thick abyssal layers, index 0 = seafloor. This had been backwards in
+  `config/long_run.yaml` (`ocn.zonal_section.invert_yaxis: true`), which
+  drew `temp`/`salt` sections with the warm surface at the *bottom* of the
+  chart. Fixed by defaulting `invert_yaxis` to `false` in
+  `jemdiag/diagnostics/ocn.py:_run_zonal_section` and in the config, so
+  plain (uninverted) matplotlib axis order — index 0 at the bottom, last
+  index at top — now correctly puts the surface on top.
+- **`overturning_streamfunction`/`heat_transport` (`jemdiag/compute.py`,**
+  **added 2026-07-26).** Two new `ocn` diag_types, derived quantities with
+  no `vars` list (unlike the per-variable diag_types) since each is a fixed
+  combination of raw fields:
+  - `overturning_streamfunction`: psi(depth, lat) in Sv — zonally integrate
+    `v * dx * dz` per layer (`dx = R*cos(lat)*dlon`, requires a regular
+    longitude grid — `compute._uniform_spacing` raises if not), then
+    cumulative-sum from the seafloor (depth index 0) upward. This is the
+    naive combined barotropic+overturning streamfunction (no gyre/
+    barotropic component removed), so magnitudes (~100+ Sv in
+    `data/long_run`) run well above a decomposed AMOC-only number
+    (~10-20 Sv) — flagged to the user, not a bug.
+  - `heat_transport`: MHT(lat) in PW — `rho*cp * integral of v*T over depth
+    and longitude`, using fixed reference seawater constants (rho=1025
+    kg/m^3, cp=3990 J/(kg K)) since jem reports no equation of state; `temp`
+    (potential temperature, degC) is used directly rather than converting
+    to Kelvin, which is standard practice for this diagnostic since the net
+    volume transport across a latitude circle is ~0. Sanity-checked against
+    `data/long_run`: peaks around ±1-3 PW with the expected equator-to-pole
+    sign pattern, the right order of magnitude for a real ocean.
+  - Both multiply by `mask_T` before the zonal sum, even though `v`/`temp`
+    already happen to be exactly `0` on land in `data/long_run` — don't rely
+    on that implicitly, a future jem run's land fill value isn't guaranteed
+    to be `0`. This is a different use of `mask_T` than the deliberately-
+    unwired map-masking case above (that's about hiding land visually in a
+    horizontal map; this is about correctness of a physical integral), so it
+    doesn't contradict that pending item.
 - **No calendar / seasonal aggregation.** Unlike `plotting_poem`'s
   `temporal_agg.aggregate` (annual/DJF/MAM/JJA/SON/month), jem has no
   calendar time axis at all, so `time`/`level` in the config are `"mean"` |
@@ -82,14 +121,19 @@ python plot_jem.py run --config config/long_run.yaml
 ```
 
 The full `run --config config/long_run.yaml` pass (all 3 components, all 4
-diag_types) was verified against `data/long_run`, and a sample of the
+original diag_types) was verified against `data/long_run`, and a sample of the
 resulting PNGs was visually inspected: `atm`/`ocn` maps render on the correct
 cartopy projection (no coastlines, per user request), `ocn`'s zonal/map
 fallback logic was confirmed to pick cartopy now that its lon/lat are real,
 and `fakelnd`'s curvilinear map, zonal sections, a vertical profile, and time
 series all rendered correctly. `--components`/`--diag-types`/`--vars` filters
-were spot-checked for
-single-variable iteration.
+were spot-checked for single-variable iteration.
+
+On 2026-07-26, `ocn.overturning_streamfunction` and `ocn.heat_transport`
+were added and re-verified end-to-end (`--components ocn --diag-types
+zonal_section overturning_streamfunction heat_transport`); output PNGs were
+visually inspected (see above for the sanity-check results) alongside the
+`invert_yaxis` orientation fix for `zonal_section`.
 
 ## Pending / open items
 

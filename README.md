@@ -36,6 +36,10 @@ Notes on grids:
   variable's horizontal coordinates are real, and fall back to a plain
   index-based map otherwise (see `jemdiag/grid.py:has_real_horizontal_coords`)
   — no config change needed if this changes in a future jem version.
+  The `depth` index runs from the seafloor (index 0, thickest layers) to
+  the surface (last index, thinnest layers) — `zonal_section` and
+  `overturning_streamfunction` default to `invert_yaxis: false` so the
+  surface is drawn at the top of the chart.
 - `fakelnd` has real `time` plus 2D curvilinear `longitude2D`/`latitude2D`;
   maps use cartopy the same way as `atm`.
 - If a run's `time` coordinate is missing or degenerate (e.g. one
@@ -90,15 +94,30 @@ See `config/long_run.yaml` for a complete example. Top-level sections:
   real-vs-synthetic coordinates are auto-detected per variable, so `ocn`
   needs no grid entry at all.
 - `diagnostics.<component>.<diag_type>` — one block per
-  `map_2d`/`zonal_section`/`profile`/`timeseries` (components only produce
-  the diag_types listed in their `HANDLERS`, see `jemdiag/diagnostics/`):
-  - `vars`: list of variable names to plot.
+  `map_2d`/`zonal_section`/`profile`/`timeseries`/`overturning_streamfunction`/
+  `heat_transport` (components only produce the diag_types listed in their
+  `HANDLERS`, see `jemdiag/diagnostics/`):
+  - `vars`: list of variable names to plot. Not used by
+    `overturning_streamfunction`/`heat_transport`, which are single derived
+    quantities computed from fixed inputs (`v`/`dzt`/`mask_T`, and
+    `v`/`temp`/`dzt`/`mask_T` respectively) rather than a user-selected
+    variable.
   - `time`/`level`: `"mean"`, an integer index, or a `"start:end"` slice
     (averaged over the slice). jem runs have no calendar, so this replaces
     season/month aggregation — it always operates on raw record index.
   - `region` (`profile`/`timeseries` only): `[lon_min, lon_max, lat_min,
     lat_max]` bounding box; requires real lon/lat coordinates.
-  - `invert_yaxis` (`zonal_section` only): flip the vertical axis.
+  - `invert_yaxis` (`zonal_section`/`overturning_streamfunction` only): flip
+    the vertical axis; default `false` draws the surface at the top.
   - `var_opts.<variable>`: per-variable overrides — `cmap`, `vmin`, `vmax`,
     `symmetric`, `n_levels`, `units`.
+
+`ocn.overturning_streamfunction` computes the meridional overturning
+streamfunction (Sverdrups) from `v`/`dzt`/`mask_T`: zonally integrate
+`v * dx * dz` per layer, then cumulatively sum from the seafloor upward.
+`ocn.heat_transport` computes the meridional ocean heat transport
+(petawatts) from `v`/`temp`/`dzt`/`mask_T`: `rho * cp * (integral of v*T
+over depth and longitude)`, using fixed reference seawater constants
+(rho=1025 kg/m^3, cp=3990 J/(kg K)) since jem does not report an equation
+of state. Both require a regular (uniformly-spaced) longitude grid.
 - `output.base_dir`/`format`/`dpi`/`n_levels` — figure output defaults.

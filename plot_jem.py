@@ -29,7 +29,10 @@ COMPONENT_MODULES = {
     "fakelnd": fakelnd,
 }
 
-ALL_DIAG_TYPES = ["map_2d", "zonal_section", "profile", "timeseries"]
+ALL_DIAG_TYPES = [
+    "map_2d", "zonal_section", "profile", "timeseries",
+    "overturning_streamfunction", "heat_transport",
+]
 
 
 def _add_run_subparser(subparsers):

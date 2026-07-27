@@ -10,6 +10,10 @@ Supported diag_types:
   zonal_section   — latitude vs. depth cross-section
   profile         — domain-mean vertical profile
   timeseries      — area-weighted domain-mean time series
+  overturning_streamfunction — meridional overturning streamfunction (Sv),
+                    computed from `v`/`dzt`/`mask_T`
+  heat_transport  — meridional ocean heat transport (PW), computed from
+                    `v`/`temp`/`dzt`/`mask_T`
 """
 
 from pathlib import Path
@@ -17,7 +21,7 @@ from typing import Callable
 
 import numpy as np
 
-from jemdiag import grid, plot_utils, selection
+from jemdiag import compute, grid, plot_utils, selection
 
 
 def run(diag_type: str, ds, config: dict, output_dir: Path) -> None:
@@ -93,7 +97,7 @@ def _run_zonal_section(ds, config: dict, output_dir: Path) -> None:
     diag_cfg = config["diagnostics"]["ocn"].get("zonal_section", {})
     out_cfg = config["output"]
     time_arg = diag_cfg.get("time", "mean")
-    invert_yaxis = diag_cfg.get("invert_yaxis", True)
+    invert_yaxis = diag_cfg.get("invert_yaxis", False)
     var_opts: dict = diag_cfg.get("var_opts", {})
 
     for varname in diag_cfg.get("vars", []):
@@ -198,6 +202,83 @@ def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
         print(f"  [ocn/timeseries] saved {out_path}")
 
 
+def _run_overturning_streamfunction(ds, config: dict, output_dir: Path) -> None:
+    diag_cfg = config["diagnostics"]["ocn"].get("overturning_streamfunction")
+    if diag_cfg is None:
+        return
+    out_cfg = config["output"]
+    time_arg = diag_cfg.get("time", "mean")
+    invert_yaxis = diag_cfg.get("invert_yaxis", False)
+
+    required = ("v", "dzt", "mask_T")
+    missing = [name for name in required if name not in ds]
+    if missing:
+        print(f"  [ocn/overturning_streamfunction] skipping — missing {missing} in dataset")
+        return
+
+    v = selection.select_along(ds["v"], "time", time_arg)
+    x_dim, y_dim = grid.horizontal_dims(v)
+    z_dim = grid.vertical_dim(v)
+    if z_dim is None:
+        print("  [ocn/overturning_streamfunction] skipping — 'v' has no vertical dimension")
+        return
+
+    psi = compute.overturning_streamfunction(v, ds["dzt"], ds["mask_T"], x_dim, y_dim, z_dim)
+
+    out_path = _out_path(output_dir, "ocn", "overturning_streamfunction", "psi", out_cfg["format"])
+    plot_utils.overturning_streamfunction(
+        psi=psi,
+        y=psi[y_dim].values,
+        z=psi[z_dim].values,
+        y_label=y_dim,
+        z_label=z_dim,
+        title="Meridional overturning streamfunction",
+        output_path=out_path,
+        vmin=diag_cfg.get("vmin"),
+        vmax=diag_cfg.get("vmax"),
+        n_levels=diag_cfg.get("n_levels", out_cfg.get("n_levels", 20)),
+        invert_yaxis=invert_yaxis,
+        dpi=out_cfg["dpi"],
+    )
+    print(f"  [ocn/overturning_streamfunction] saved {out_path}")
+
+
+def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
+    diag_cfg = config["diagnostics"]["ocn"].get("heat_transport")
+    if diag_cfg is None:
+        return
+    out_cfg = config["output"]
+    time_arg = diag_cfg.get("time", "mean")
+
+    required = ("v", "temp", "dzt", "mask_T")
+    missing = [name for name in required if name not in ds]
+    if missing:
+        print(f"  [ocn/heat_transport] skipping — missing {missing} in dataset")
+        return
+
+    v = selection.select_along(ds["v"], "time", time_arg)
+    temp = selection.select_along(ds["temp"], "time", time_arg)
+    x_dim, y_dim = grid.horizontal_dims(v)
+    z_dim = grid.vertical_dim(v)
+    if z_dim is None:
+        print("  [ocn/heat_transport] skipping — 'v' has no vertical dimension")
+        return
+
+    mht = compute.meridional_heat_transport(v, temp, ds["dzt"], ds["mask_T"], x_dim, y_dim, z_dim)
+
+    out_path = _out_path(output_dir, "ocn", "heat_transport", "mht", out_cfg["format"])
+    plot_utils.meridional_transport(
+        y=mht[y_dim].values,
+        values=np.asarray(mht.values, dtype=float),
+        y_label=y_dim,
+        title="Meridional ocean heat transport",
+        output_path=out_path,
+        units="PW",
+        dpi=out_cfg["dpi"],
+    )
+    print(f"  [ocn/heat_transport] saved {out_path}")
+
+
 def _out_path(output_dir: Path, component: str, diag_type: str, varname: str, fmt: str) -> Path:
     safe_var = varname.replace(".", "_")
     return output_dir / component / diag_type / f"{safe_var}.{fmt}"
@@ -208,4 +289,6 @@ HANDLERS: dict[str, Callable] = {
     "zonal_section": _run_zonal_section,
     "profile": _run_profile,
     "timeseries": _run_timeseries,
+    "overturning_streamfunction": _run_overturning_streamfunction,
+    "heat_transport": _run_heat_transport,
 }
