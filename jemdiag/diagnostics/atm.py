@@ -36,7 +36,7 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
     out_cfg = config["output"]
     grid_cfg = config.get("grids", {}).get("atm", {})
     projection = grid_cfg.get("projection", "PlateCarree")
-    time_arg = diag_cfg.get("time", "mean")
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     level_arg = diag_cfg.get("level", "mean")
     var_opts: dict = diag_cfg.get("var_opts", {})
 
@@ -45,41 +45,47 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
             print(f"  [atm/map_2d] skipping '{varname}' — not in dataset")
             continue
         da = ds[varname]
-        try:
-            da2d = selection.reduce_to_map(da, time_arg, level_arg)
-        except (ValueError, KeyError) as exc:
-            print(f"  [atm/map_2d] skipping '{varname}': {exc}")
-            continue
-
-        x_dim, y_dim = grid.horizontal_dims(da2d)
-        lon, lat, _ = grid.horizontal_coords(da2d, x_dim, y_dim)
-        da2d = da2d.transpose(y_dim, x_dim)
-
         opts = var_opts.get(varname, {})
         name, units = _var_label(da)
-        out_path = _out_path(output_dir, "atm", "map_2d", varname, out_cfg["format"])
-        plot_utils.global_map(
-            data=da2d,
-            lon=lon,
-            lat=lat,
-            title=f"Atmos {name}",
-            output_path=out_path,
-            cmap=opts.get("cmap"),
-            units=opts.get("units", units),
-            vmin=opts.get("vmin"),
-            vmax=opts.get("vmax"),
-            symmetric=opts.get("symmetric", False),
-            n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
-            dpi=out_cfg["dpi"],
-            projection=projection,
-        )
-        print(f"  [atm/map_2d] saved {out_path}")
+
+        for time_arg in time_args:
+            try:
+                da2d = selection.reduce_to_map(da, time_arg, level_arg)
+            except (ValueError, KeyError) as exc:
+                print(f"  [atm/map_2d] skipping '{varname}': {exc}")
+                continue
+
+            x_dim, y_dim = grid.horizontal_dims(da2d)
+            lon, lat, _ = grid.horizontal_coords(da2d, x_dim, y_dim)
+            da2d = da2d.transpose(y_dim, x_dim)
+
+            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
+            title = f"Atmos {name}" + (f" ({suffix})" if suffix else "")
+            out_path = _out_path(
+                output_dir, "atm", "map_2d", varname, out_cfg["format"], time_suffix=suffix
+            )
+            plot_utils.global_map(
+                data=da2d,
+                lon=lon,
+                lat=lat,
+                title=title,
+                output_path=out_path,
+                cmap=opts.get("cmap"),
+                units=opts.get("units", units),
+                vmin=opts.get("vmin"),
+                vmax=opts.get("vmax"),
+                symmetric=opts.get("symmetric", False),
+                n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
+                dpi=out_cfg["dpi"],
+                projection=projection,
+            )
+            print(f"  [atm/map_2d] saved {out_path}")
 
 
 def _run_zonal_section(ds, config: dict, output_dir: Path) -> None:
     diag_cfg = config["diagnostics"]["atm"].get("zonal_section", {})
     out_cfg = config["output"]
-    time_arg = diag_cfg.get("time", "mean")
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     invert_yaxis = diag_cfg.get("invert_yaxis", False)
     var_opts: dict = diag_cfg.get("var_opts", {})
 
@@ -88,43 +94,49 @@ def _run_zonal_section(ds, config: dict, output_dir: Path) -> None:
             print(f"  [atm/zonal_section] skipping '{varname}' — not in dataset")
             continue
         da = ds[varname]
-        try:
-            da2d = selection.reduce_to_zonal(da, time_arg)
-        except ValueError as exc:
-            print(f"  [atm/zonal_section] skipping '{varname}': {exc}")
-            continue
-
-        z_dim = grid.vertical_dim(da2d)
-        y_dim = [d for d in da2d.dims if d != z_dim][0]
-        da2d = da2d.transpose(z_dim, y_dim)
-
         opts = var_opts.get(varname, {})
         name, units = _var_label(da)
-        out_path = _out_path(output_dir, "atm", "zonal_section", varname, out_cfg["format"])
-        plot_utils.zonal_section(
-            data=da2d,
-            y=da2d[y_dim].values,
-            z=da2d[z_dim].values,
-            y_label=y_dim,
-            z_label=z_dim,
-            title=f"Atmos {name} zonal mean",
-            output_path=out_path,
-            cmap=opts.get("cmap"),
-            units=opts.get("units", units),
-            vmin=opts.get("vmin"),
-            vmax=opts.get("vmax"),
-            symmetric=opts.get("symmetric", False),
-            n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
-            invert_yaxis=opts.get("invert_yaxis", invert_yaxis),
-            dpi=out_cfg["dpi"],
-        )
-        print(f"  [atm/zonal_section] saved {out_path}")
+
+        for time_arg in time_args:
+            try:
+                da2d = selection.reduce_to_zonal(da, time_arg)
+            except ValueError as exc:
+                print(f"  [atm/zonal_section] skipping '{varname}': {exc}")
+                continue
+
+            z_dim = grid.vertical_dim(da2d)
+            y_dim = [d for d in da2d.dims if d != z_dim][0]
+            da2d = da2d.transpose(z_dim, y_dim)
+
+            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
+            title = f"Atmos {name} zonal mean" + (f" ({suffix})" if suffix else "")
+            out_path = _out_path(
+                output_dir, "atm", "zonal_section", varname, out_cfg["format"], time_suffix=suffix
+            )
+            plot_utils.zonal_section(
+                data=da2d,
+                y=da2d[y_dim].values,
+                z=da2d[z_dim].values,
+                y_label=y_dim,
+                z_label=z_dim,
+                title=title,
+                output_path=out_path,
+                cmap=opts.get("cmap"),
+                units=opts.get("units", units),
+                vmin=opts.get("vmin"),
+                vmax=opts.get("vmax"),
+                symmetric=opts.get("symmetric", False),
+                n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
+                invert_yaxis=opts.get("invert_yaxis", invert_yaxis),
+                dpi=out_cfg["dpi"],
+            )
+            print(f"  [atm/zonal_section] saved {out_path}")
 
 
 def _run_profile(ds, config: dict, output_dir: Path) -> None:
     diag_cfg = config["diagnostics"]["atm"].get("profile", {})
     out_cfg = config["output"]
-    time_arg = diag_cfg.get("time", "mean")
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     region = diag_cfg.get("region")
 
     for varname in diag_cfg.get("vars", []):
@@ -132,25 +144,31 @@ def _run_profile(ds, config: dict, output_dir: Path) -> None:
             print(f"  [atm/profile] skipping '{varname}' — not in dataset")
             continue
         da = ds[varname]
-        try:
-            da1d = selection.reduce_to_profile(da, time_arg, region)
-        except ValueError as exc:
-            print(f"  [atm/profile] skipping '{varname}': {exc}")
-            continue
-
-        z_dim = grid.vertical_dim(da1d)
         name, units = _var_label(da)
-        out_path = _out_path(output_dir, "atm", "profile", varname, out_cfg["format"])
-        plot_utils.profile(
-            data=da1d,
-            z=da1d[z_dim].values,
-            z_label=z_dim,
-            title=f"Atmos {name} profile",
-            output_path=out_path,
-            units=units,
-            dpi=out_cfg["dpi"],
-        )
-        print(f"  [atm/profile] saved {out_path}")
+
+        for time_arg in time_args:
+            try:
+                da1d = selection.reduce_to_profile(da, time_arg, region)
+            except ValueError as exc:
+                print(f"  [atm/profile] skipping '{varname}': {exc}")
+                continue
+
+            z_dim = grid.vertical_dim(da1d)
+            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
+            title = f"Atmos {name} profile" + (f" ({suffix})" if suffix else "")
+            out_path = _out_path(
+                output_dir, "atm", "profile", varname, out_cfg["format"], time_suffix=suffix
+            )
+            plot_utils.profile(
+                data=da1d,
+                z=da1d[z_dim].values,
+                z_label=z_dim,
+                title=title,
+                output_path=out_path,
+                units=units,
+                dpi=out_cfg["dpi"],
+            )
+            print(f"  [atm/profile] saved {out_path}")
 
 
 def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
@@ -185,8 +203,17 @@ def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
         print(f"  [atm/timeseries] saved {out_path}")
 
 
-def _out_path(output_dir: Path, component: str, diag_type: str, varname: str, fmt: str) -> Path:
+def _out_path(
+    output_dir: Path,
+    component: str,
+    diag_type: str,
+    varname: str,
+    fmt: str,
+    time_suffix: str | None = None,
+) -> Path:
     safe_var = varname.replace(".", "_")
+    if time_suffix:
+        safe_var = f"{safe_var}_{time_suffix}"
     return output_dir / component / diag_type / f"{safe_var}.{fmt}"
 
 

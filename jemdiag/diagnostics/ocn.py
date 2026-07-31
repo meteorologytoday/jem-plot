@@ -49,7 +49,7 @@ def _var_label(da) -> tuple[str, str]:
 def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
     diag_cfg = config["diagnostics"]["ocn"].get("map_2d", {})
     out_cfg = config["output"]
-    time_arg = diag_cfg.get("time", "mean")
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     level_arg = diag_cfg.get("level", "mean")
     var_opts: dict = diag_cfg.get("var_opts", {})
 
@@ -58,45 +58,51 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
             print(f"  [ocn/map_2d] skipping '{varname}' — not in dataset")
             continue
         da = ds[varname]
-        try:
-            da2d = selection.reduce_to_map(da, time_arg, level_arg)
-        except (ValueError, KeyError) as exc:
-            print(f"  [ocn/map_2d] skipping '{varname}': {exc}")
-            continue
-
-        x_dim, y_dim = grid.horizontal_dims(da2d)
-        x, y, _ = grid.horizontal_coords(da2d, x_dim, y_dim)
-        da2d = da2d.transpose(y_dim, x_dim)
-
         opts = var_opts.get(varname, {})
         name, units = _var_label(da)
-        out_path = _out_path(output_dir, "ocn", "map_2d", varname, out_cfg["format"])
-        common_kwargs = dict(
-            cmap=opts.get("cmap"),
-            units=opts.get("units", units),
-            vmin=opts.get("vmin"),
-            vmax=opts.get("vmax"),
-            symmetric=opts.get("symmetric", False),
-            n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
-            dpi=out_cfg["dpi"],
-        )
-        if grid.has_real_horizontal_coords(da2d, x_dim, y_dim):
-            plot_utils.global_map(
-                data=da2d, lon=x, lat=y,
-                title=f"Ocean {name}", output_path=out_path, **common_kwargs,
+
+        for time_arg in time_args:
+            try:
+                da2d = selection.reduce_to_map(da, time_arg, level_arg)
+            except (ValueError, KeyError) as exc:
+                print(f"  [ocn/map_2d] skipping '{varname}': {exc}")
+                continue
+
+            x_dim, y_dim = grid.horizontal_dims(da2d)
+            x, y, _ = grid.horizontal_coords(da2d, x_dim, y_dim)
+            da2d = da2d.transpose(y_dim, x_dim)
+
+            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
+            title = f"Ocean {name}" + (f" ({suffix})" if suffix else "")
+            out_path = _out_path(
+                output_dir, "ocn", "map_2d", varname, out_cfg["format"], time_suffix=suffix
             )
-        else:
-            plot_utils.index_map(
-                data=da2d, x=x, y=y, x_label=x_dim, y_label=y_dim,
-                title=f"Ocean {name}", output_path=out_path, **common_kwargs,
+            common_kwargs = dict(
+                cmap=opts.get("cmap"),
+                units=opts.get("units", units),
+                vmin=opts.get("vmin"),
+                vmax=opts.get("vmax"),
+                symmetric=opts.get("symmetric", False),
+                n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
+                dpi=out_cfg["dpi"],
             )
-        print(f"  [ocn/map_2d] saved {out_path}")
+            if grid.has_real_horizontal_coords(da2d, x_dim, y_dim):
+                plot_utils.global_map(
+                    data=da2d, lon=x, lat=y,
+                    title=title, output_path=out_path, **common_kwargs,
+                )
+            else:
+                plot_utils.index_map(
+                    data=da2d, x=x, y=y, x_label=x_dim, y_label=y_dim,
+                    title=title, output_path=out_path, **common_kwargs,
+                )
+            print(f"  [ocn/map_2d] saved {out_path}")
 
 
 def _run_zonal_section(ds, config: dict, output_dir: Path) -> None:
     diag_cfg = config["diagnostics"]["ocn"].get("zonal_section", {})
     out_cfg = config["output"]
-    time_arg = diag_cfg.get("time", "mean")
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     invert_yaxis = diag_cfg.get("invert_yaxis", False)
     var_opts: dict = diag_cfg.get("var_opts", {})
 
@@ -105,43 +111,49 @@ def _run_zonal_section(ds, config: dict, output_dir: Path) -> None:
             print(f"  [ocn/zonal_section] skipping '{varname}' — not in dataset")
             continue
         da = ds[varname]
-        try:
-            da2d = selection.reduce_to_zonal(da, time_arg)
-        except ValueError as exc:
-            print(f"  [ocn/zonal_section] skipping '{varname}': {exc}")
-            continue
-
-        z_dim = grid.vertical_dim(da2d)
-        y_dim = [d for d in da2d.dims if d != z_dim][0]
-        da2d = da2d.transpose(z_dim, y_dim)
-
         opts = var_opts.get(varname, {})
         name, units = _var_label(da)
-        out_path = _out_path(output_dir, "ocn", "zonal_section", varname, out_cfg["format"])
-        plot_utils.zonal_section(
-            data=da2d,
-            y=da2d[y_dim].values,
-            z=da2d[z_dim].values,
-            y_label=y_dim,
-            z_label=z_dim,
-            title=f"Ocean {name} zonal mean",
-            output_path=out_path,
-            cmap=opts.get("cmap"),
-            units=opts.get("units", units),
-            vmin=opts.get("vmin"),
-            vmax=opts.get("vmax"),
-            symmetric=opts.get("symmetric", False),
-            n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
-            invert_yaxis=opts.get("invert_yaxis", invert_yaxis),
-            dpi=out_cfg["dpi"],
-        )
-        print(f"  [ocn/zonal_section] saved {out_path}")
+
+        for time_arg in time_args:
+            try:
+                da2d = selection.reduce_to_zonal(da, time_arg)
+            except ValueError as exc:
+                print(f"  [ocn/zonal_section] skipping '{varname}': {exc}")
+                continue
+
+            z_dim = grid.vertical_dim(da2d)
+            y_dim = [d for d in da2d.dims if d != z_dim][0]
+            da2d = da2d.transpose(z_dim, y_dim)
+
+            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
+            title = f"Ocean {name} zonal mean" + (f" ({suffix})" if suffix else "")
+            out_path = _out_path(
+                output_dir, "ocn", "zonal_section", varname, out_cfg["format"], time_suffix=suffix
+            )
+            plot_utils.zonal_section(
+                data=da2d,
+                y=da2d[y_dim].values,
+                z=da2d[z_dim].values,
+                y_label=y_dim,
+                z_label=z_dim,
+                title=title,
+                output_path=out_path,
+                cmap=opts.get("cmap"),
+                units=opts.get("units", units),
+                vmin=opts.get("vmin"),
+                vmax=opts.get("vmax"),
+                symmetric=opts.get("symmetric", False),
+                n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
+                invert_yaxis=opts.get("invert_yaxis", invert_yaxis),
+                dpi=out_cfg["dpi"],
+            )
+            print(f"  [ocn/zonal_section] saved {out_path}")
 
 
 def _run_profile(ds, config: dict, output_dir: Path) -> None:
     diag_cfg = config["diagnostics"]["ocn"].get("profile", {})
     out_cfg = config["output"]
-    time_arg = diag_cfg.get("time", "mean")
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     region = diag_cfg.get("region")
 
     for varname in diag_cfg.get("vars", []):
@@ -149,25 +161,31 @@ def _run_profile(ds, config: dict, output_dir: Path) -> None:
             print(f"  [ocn/profile] skipping '{varname}' — not in dataset")
             continue
         da = ds[varname]
-        try:
-            da1d = selection.reduce_to_profile(da, time_arg, region)
-        except ValueError as exc:
-            print(f"  [ocn/profile] skipping '{varname}': {exc}")
-            continue
-
-        z_dim = grid.vertical_dim(da1d)
         name, units = _var_label(da)
-        out_path = _out_path(output_dir, "ocn", "profile", varname, out_cfg["format"])
-        plot_utils.profile(
-            data=da1d,
-            z=da1d[z_dim].values,
-            z_label=z_dim,
-            title=f"Ocean {name} profile",
-            output_path=out_path,
-            units=units,
-            dpi=out_cfg["dpi"],
-        )
-        print(f"  [ocn/profile] saved {out_path}")
+
+        for time_arg in time_args:
+            try:
+                da1d = selection.reduce_to_profile(da, time_arg, region)
+            except ValueError as exc:
+                print(f"  [ocn/profile] skipping '{varname}': {exc}")
+                continue
+
+            z_dim = grid.vertical_dim(da1d)
+            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
+            title = f"Ocean {name} profile" + (f" ({suffix})" if suffix else "")
+            out_path = _out_path(
+                output_dir, "ocn", "profile", varname, out_cfg["format"], time_suffix=suffix
+            )
+            plot_utils.profile(
+                data=da1d,
+                z=da1d[z_dim].values,
+                z_label=z_dim,
+                title=title,
+                output_path=out_path,
+                units=units,
+                dpi=out_cfg["dpi"],
+            )
+            print(f"  [ocn/profile] saved {out_path}")
 
 
 def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
@@ -207,7 +225,7 @@ def _run_overturning_streamfunction(ds, config: dict, output_dir: Path) -> None:
     if diag_cfg is None:
         return
     out_cfg = config["output"]
-    time_arg = diag_cfg.get("time", "mean")
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     invert_yaxis = diag_cfg.get("invert_yaxis", False)
 
     required = ("v", "dzt", "mask_T")
@@ -216,31 +234,36 @@ def _run_overturning_streamfunction(ds, config: dict, output_dir: Path) -> None:
         print(f"  [ocn/overturning_streamfunction] skipping — missing {missing} in dataset")
         return
 
-    v = selection.select_along(ds["v"], "time", time_arg)
-    x_dim, y_dim = grid.horizontal_dims(v)
-    z_dim = grid.vertical_dim(v)
+    x_dim, y_dim = grid.horizontal_dims(ds["v"])
+    z_dim = grid.vertical_dim(ds["v"])
     if z_dim is None:
         print("  [ocn/overturning_streamfunction] skipping — 'v' has no vertical dimension")
         return
 
-    psi = compute.overturning_streamfunction(v, ds["dzt"], ds["mask_T"], x_dim, y_dim, z_dim)
+    for time_arg in time_args:
+        v = selection.select_along(ds["v"], "time", time_arg)
+        psi = compute.overturning_streamfunction(v, ds["dzt"], ds["mask_T"], x_dim, y_dim, z_dim)
 
-    out_path = _out_path(output_dir, "ocn", "overturning_streamfunction", "psi", out_cfg["format"])
-    plot_utils.overturning_streamfunction(
-        psi=psi,
-        y=psi[y_dim].values,
-        z=psi[z_dim].values,
-        y_label=y_dim,
-        z_label=z_dim,
-        title="Meridional overturning streamfunction",
-        output_path=out_path,
-        vmin=diag_cfg.get("vmin"),
-        vmax=diag_cfg.get("vmax"),
-        n_levels=diag_cfg.get("n_levels", out_cfg.get("n_levels", 20)),
-        invert_yaxis=invert_yaxis,
-        dpi=out_cfg["dpi"],
-    )
-    print(f"  [ocn/overturning_streamfunction] saved {out_path}")
+        suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
+        title = "Meridional overturning streamfunction" + (f" ({suffix})" if suffix else "")
+        out_path = _out_path(
+            output_dir, "ocn", "overturning_streamfunction", "psi", out_cfg["format"], time_suffix=suffix
+        )
+        plot_utils.overturning_streamfunction(
+            psi=psi,
+            y=psi[y_dim].values,
+            z=psi[z_dim].values,
+            y_label=y_dim,
+            z_label=z_dim,
+            title=title,
+            output_path=out_path,
+            vmin=diag_cfg.get("vmin"),
+            vmax=diag_cfg.get("vmax"),
+            n_levels=diag_cfg.get("n_levels", out_cfg.get("n_levels", 20)),
+            invert_yaxis=invert_yaxis,
+            dpi=out_cfg["dpi"],
+        )
+        print(f"  [ocn/overturning_streamfunction] saved {out_path}")
 
 
 def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
@@ -248,7 +271,7 @@ def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
     if diag_cfg is None:
         return
     out_cfg = config["output"]
-    time_arg = diag_cfg.get("time", "mean")
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
 
     required = ("v", "temp", "dzt", "mask_T")
     missing = [name for name in required if name not in ds]
@@ -256,31 +279,45 @@ def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
         print(f"  [ocn/heat_transport] skipping — missing {missing} in dataset")
         return
 
-    v = selection.select_along(ds["v"], "time", time_arg)
-    temp = selection.select_along(ds["temp"], "time", time_arg)
-    x_dim, y_dim = grid.horizontal_dims(v)
-    z_dim = grid.vertical_dim(v)
+    x_dim, y_dim = grid.horizontal_dims(ds["v"])
+    z_dim = grid.vertical_dim(ds["v"])
     if z_dim is None:
         print("  [ocn/heat_transport] skipping — 'v' has no vertical dimension")
         return
 
-    mht = compute.meridional_heat_transport(v, temp, ds["dzt"], ds["mask_T"], x_dim, y_dim, z_dim)
+    for time_arg in time_args:
+        v = selection.select_along(ds["v"], "time", time_arg)
+        temp = selection.select_along(ds["temp"], "time", time_arg)
+        mht = compute.meridional_heat_transport(v, temp, ds["dzt"], ds["mask_T"], x_dim, y_dim, z_dim)
 
-    out_path = _out_path(output_dir, "ocn", "heat_transport", "mht", out_cfg["format"])
-    plot_utils.meridional_transport(
-        y=mht[y_dim].values,
-        values=np.asarray(mht.values, dtype=float),
-        y_label=y_dim,
-        title="Meridional ocean heat transport",
-        output_path=out_path,
-        units="PW",
-        dpi=out_cfg["dpi"],
-    )
-    print(f"  [ocn/heat_transport] saved {out_path}")
+        suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
+        title = "Meridional ocean heat transport" + (f" ({suffix})" if suffix else "")
+        out_path = _out_path(
+            output_dir, "ocn", "heat_transport", "mht", out_cfg["format"], time_suffix=suffix
+        )
+        plot_utils.meridional_transport(
+            y=mht[y_dim].values,
+            values=np.asarray(mht.values, dtype=float),
+            y_label=y_dim,
+            title=title,
+            output_path=out_path,
+            units="PW",
+            dpi=out_cfg["dpi"],
+        )
+        print(f"  [ocn/heat_transport] saved {out_path}")
 
 
-def _out_path(output_dir: Path, component: str, diag_type: str, varname: str, fmt: str) -> Path:
+def _out_path(
+    output_dir: Path,
+    component: str,
+    diag_type: str,
+    varname: str,
+    fmt: str,
+    time_suffix: str | None = None,
+) -> Path:
     safe_var = varname.replace(".", "_")
+    if time_suffix:
+        safe_var = f"{safe_var}_{time_suffix}"
     return output_dir / component / diag_type / f"{safe_var}.{fmt}"
 
 

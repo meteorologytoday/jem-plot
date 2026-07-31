@@ -111,6 +111,16 @@ it's built the way it is. Not user-facing docs — see `README.md` for usage.
   calendar time axis at all, so `time`/`level` in the config are `"mean"` |
   int | `"start:end"` slice over the raw record/level index
   (`jemdiag/selection.py`, carried over from the old CLI's semantics).
+- **Multi-snapshot `time` + shared default.** For every non-timeseries
+  diag_type, `time` may also be a list of specs (`selection.
+  normalize_time_args`), producing one output file per entry with a
+  `_<time_label>` filename suffix (`selection.time_label`, e.g. `t0`,
+  `t5-10`, `mean`) instead of the plain `{variable}.{fmt}` name used for a
+  single spec. `diagnostics.time` is a shared default resolved by
+  `selection.resolve_time_spec`; each diag_type block can still set its own
+  `time` to override it. `level` was deliberately left single-spec-only —
+  nothing asked for a level sweep, and multiplying it against a list of
+  `time` specs would blow up combinatorially for no requested benefit.
 
 ## Testing
 

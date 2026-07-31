@@ -81,7 +81,9 @@ python plot_jem.py list-vars --run-dir data/long_run --component atm
 Figures are written to
 `{output.base_dir}/{experiment.name}/{component}/{diag_type}/{variable}.png`
 (dots in variable names become underscores), e.g.
-`figures/long_run/atm/map_2d/shortwave_rad_rsds.png`.
+`figures/long_run/atm/map_2d/shortwave_rad_rsds.png`. If a diag_type's `time`
+resolves to more than one spec (see below), each one gets its own file with a
+`_<time_label>` suffix instead, e.g. `..._t0.png`/`..._mean.png`.
 
 ## Config file schema
 
@@ -93,6 +95,11 @@ See `config/long_run.yaml` for a complete example. Top-level sections:
   `PlateCarree` is implemented); horizontal/vertical dimension names and
   real-vs-synthetic coordinates are auto-detected per variable, so `ocn`
   needs no grid entry at all.
+- `diagnostics.time` — shared default `time` selection for every
+  non-timeseries diag_type below (`map_2d`/`zonal_section`/`profile`/
+  `overturning_streamfunction`/`heat_transport`); `timeseries` always plots
+  the full time axis and ignores it. Any diag_type block may set its own
+  `time` to override this default just for itself.
 - `diagnostics.<component>.<diag_type>` — one block per
   `map_2d`/`zonal_section`/`profile`/`timeseries`/`overturning_streamfunction`/
   `heat_transport` (components only produce the diag_types listed in their
@@ -102,9 +109,13 @@ See `config/long_run.yaml` for a complete example. Top-level sections:
     quantities computed from fixed inputs (`v`/`dzt`/`mask_T`, and
     `v`/`temp`/`dzt`/`mask_T` respectively) rather than a user-selected
     variable.
-  - `time`/`level`: `"mean"`, an integer index, or a `"start:end"` slice
-    (averaged over the slice). jem runs have no calendar, so this replaces
-    season/month aggregation — it always operates on raw record index.
+  - `time` (all diag_types except `timeseries`) / `level`: `"mean"`, an
+    integer index, or a `"start:end"` slice (averaged over the slice). jem
+    runs have no calendar, so this replaces season/month aggregation — it
+    always operates on raw record index. `time` may also be a list of any
+    of those, e.g. `time: [0, 12, mean]`, to produce one plot per entry
+    instead of one plot overall (see the output path note above); `level`
+    only ever takes a single spec.
   - `region` (`profile`/`timeseries` only): `[lon_min, lon_max, lat_min,
     lat_max]` bounding box; requires real lon/lat coordinates.
   - `invert_yaxis` (`zonal_section`/`overturning_streamfunction` only): flip

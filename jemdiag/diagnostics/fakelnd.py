@@ -36,7 +36,7 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
     out_cfg = config["output"]
     grid_cfg = config.get("grids", {}).get("fakelnd", {})
     projection = grid_cfg.get("projection", "PlateCarree")
-    time_arg = diag_cfg.get("time", "mean")
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     var_opts: dict = diag_cfg.get("var_opts", {})
 
     for varname in diag_cfg.get("vars", []):
@@ -44,35 +44,41 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
             print(f"  [fakelnd/map_2d] skipping '{varname}' — not in dataset")
             continue
         da = ds[varname]
-        try:
-            da2d = selection.reduce_to_map(da, time_arg, "mean")
-        except (ValueError, KeyError) as exc:
-            print(f"  [fakelnd/map_2d] skipping '{varname}': {exc}")
-            continue
-
-        x_dim, y_dim = grid.horizontal_dims(da2d)
-        lon, lat, _ = grid.horizontal_coords(da2d, x_dim, y_dim)
-        da2d = da2d.transpose(y_dim, x_dim)
-
         opts = var_opts.get(varname, {})
         name, units = _var_label(da)
-        out_path = _out_path(output_dir, "fakelnd", "map_2d", varname, out_cfg["format"])
-        plot_utils.global_map(
-            data=da2d,
-            lon=lon,
-            lat=lat,
-            title=f"fakelnd {name}",
-            output_path=out_path,
-            cmap=opts.get("cmap"),
-            units=opts.get("units", units),
-            vmin=opts.get("vmin"),
-            vmax=opts.get("vmax"),
-            symmetric=opts.get("symmetric", False),
-            n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
-            dpi=out_cfg["dpi"],
-            projection=projection,
-        )
-        print(f"  [fakelnd/map_2d] saved {out_path}")
+
+        for time_arg in time_args:
+            try:
+                da2d = selection.reduce_to_map(da, time_arg, "mean")
+            except (ValueError, KeyError) as exc:
+                print(f"  [fakelnd/map_2d] skipping '{varname}': {exc}")
+                continue
+
+            x_dim, y_dim = grid.horizontal_dims(da2d)
+            lon, lat, _ = grid.horizontal_coords(da2d, x_dim, y_dim)
+            da2d = da2d.transpose(y_dim, x_dim)
+
+            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
+            title = f"fakelnd {name}" + (f" ({suffix})" if suffix else "")
+            out_path = _out_path(
+                output_dir, "fakelnd", "map_2d", varname, out_cfg["format"], time_suffix=suffix
+            )
+            plot_utils.global_map(
+                data=da2d,
+                lon=lon,
+                lat=lat,
+                title=title,
+                output_path=out_path,
+                cmap=opts.get("cmap"),
+                units=opts.get("units", units),
+                vmin=opts.get("vmin"),
+                vmax=opts.get("vmax"),
+                symmetric=opts.get("symmetric", False),
+                n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
+                dpi=out_cfg["dpi"],
+                projection=projection,
+            )
+            print(f"  [fakelnd/map_2d] saved {out_path}")
 
 
 def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
@@ -106,8 +112,17 @@ def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
         print(f"  [fakelnd/timeseries] saved {out_path}")
 
 
-def _out_path(output_dir: Path, component: str, diag_type: str, varname: str, fmt: str) -> Path:
+def _out_path(
+    output_dir: Path,
+    component: str,
+    diag_type: str,
+    varname: str,
+    fmt: str,
+    time_suffix: str | None = None,
+) -> Path:
     safe_var = varname.replace(".", "_")
+    if time_suffix:
+        safe_var = f"{safe_var}_{time_suffix}"
     return output_dir / component / diag_type / f"{safe_var}.{fmt}"
 
 
