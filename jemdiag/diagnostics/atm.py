@@ -7,6 +7,23 @@ Supported diag_types:
   zonal_section   — latitude vs. level cross-section
   profile         — domain-mean vertical profile
   timeseries      — area-weighted domain-mean time series
+  heat_transport  — meridional atmospheric heat transport (PW). Two
+                    methods, picked via config `method` (default
+                    `dynamical`):
+                      dynamical — from time-averaged `v_wind`/`temperature`/
+                        `normalized_surface_pressure`; mean-circulation
+                        transport only, no transient-eddy term.
+                      radiative — top-of-atmosphere/surface residual
+                        ("indirect") method from `shortwave_rad.ftop`/
+                        `longwave_rad.ftop`/`surface_flux.hfluxn.0`+`.1`;
+                        captures the total (mean + eddy) transport. The
+                        surface flux is split by surface type (`.0`, `.1`)
+                        rather than provided as a single total
+                        (`surface_flux.hfluxn.2` is not produced by
+                        `data/long_run`); since the surface types are a
+                        binary partition of each grid cell, summing `.0`
+                        and `.1` gives the total surface flux without
+                        needing the land fraction as a weight.
 """
 
 from pathlib import Path
@@ -14,7 +31,7 @@ from typing import Callable
 
 import numpy as np
 
-from jemdiag import grid, plot_utils, selection
+from jemdiag import compute, grid, plot_utils, selection
 
 
 def run(diag_type: str, ds, config: dict, output_dir: Path) -> None:
@@ -203,6 +220,81 @@ def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
         print(f"  [atm/timeseries] saved {out_path}")
 
 
+def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
+    diag_cfg = config["diagnostics"]["atm"].get("heat_transport")
+    if diag_cfg is None:
+        return
+    out_cfg = config["output"]
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
+    method = diag_cfg.get("method", "dynamical")
+
+    if method == "dynamical":
+        required = ("v_wind", "temperature", "normalized_surface_pressure")
+    elif method == "radiative":
+        required = (
+            "shortwave_rad.ftop",
+            "longwave_rad.ftop",
+            "surface_flux.hfluxn.0",
+            "surface_flux.hfluxn.1",
+        )
+    else:
+        print(
+            f"  [atm/heat_transport] skipping — unknown method '{method}' "
+            "(expected 'dynamical' or 'radiative')"
+        )
+        return
+
+    missing = [name for name in required if name not in ds]
+    if missing:
+        print(f"  [atm/heat_transport] skipping — missing {missing} in dataset")
+        return
+
+    if method == "dynamical":
+        x_dim, y_dim = grid.horizontal_dims(ds["v_wind"])
+        z_dim = grid.vertical_dim(ds["v_wind"])
+        if z_dim is None:
+            print("  [atm/heat_transport] skipping — 'v_wind' has no vertical dimension")
+            return
+    else:
+        x_dim, y_dim = grid.horizontal_dims(ds["shortwave_rad.ftop"])
+
+    for time_arg in time_args:
+        try:
+            if method == "dynamical":
+                v = selection.select_along(ds["v_wind"], "time", time_arg)
+                temp = selection.select_along(ds["temperature"], "time", time_arg)
+                ps = selection.select_along(ds["normalized_surface_pressure"], "time", time_arg)
+                aht = compute.atmosphere_heat_transport(v, temp, ps, x_dim, y_dim, z_dim)
+            else:
+                toa_net = selection.select_along(
+                    ds["shortwave_rad.ftop"], "time", time_arg
+                ) - selection.select_along(ds["longwave_rad.ftop"], "time", time_arg)
+                surface_net = selection.select_along(
+                    ds["surface_flux.hfluxn.0"], "time", time_arg
+                ) + selection.select_along(ds["surface_flux.hfluxn.1"], "time", time_arg)
+                aht = compute.atmosphere_heat_transport_radiative(toa_net, surface_net, x_dim, y_dim)
+        except ValueError as exc:
+            print(f"  [atm/heat_transport] skipping: {exc}")
+            continue
+
+        time_label = selection.time_label(time_arg)
+        suffix = time_label if len(time_args) > 1 else None
+        title = f"Meridional atmospheric heat transport ({method}, {time_label})"
+        out_path = _out_path(
+            output_dir, "atm", "heat_transport", "aht", out_cfg["format"], time_suffix=suffix
+        )
+        plot_utils.meridional_transport(
+            y=aht[y_dim].values,
+            values=np.asarray(aht.values, dtype=float),
+            y_label=y_dim,
+            title=title,
+            output_path=out_path,
+            units="PW",
+            dpi=out_cfg["dpi"],
+        )
+        print(f"  [atm/heat_transport] saved {out_path}")
+
+
 def _out_path(
     output_dir: Path,
     component: str,
@@ -222,4 +314,5 @@ HANDLERS: dict[str, Callable] = {
     "zonal_section": _run_zonal_section,
     "profile": _run_profile,
     "timeseries": _run_timeseries,
+    "heat_transport": _run_heat_transport,
 }
