@@ -15,15 +15,22 @@ Supported diag_types:
                         transport only, no transient-eddy term.
                       radiative — top-of-atmosphere/surface residual
                         ("indirect") method from `shortwave_rad.ftop`/
-                        `longwave_rad.ftop`/`surface_flux.hfluxn.0`+`.1`;
-                        captures the total (mean + eddy) transport. The
-                        surface flux is split by surface type (`.0`, `.1`)
-                        rather than provided as a single total
-                        (`surface_flux.hfluxn.2` is not produced by
-                        `data/long_run`); since the surface types are a
-                        binary partition of each grid cell, summing `.0`
-                        and `.1` gives the total surface flux without
-                        needing the land fraction as a weight.
+                        `longwave_rad.ftop`/`-surface_flux.hfluxn.1`;
+                        captures the total (mean + eddy) transport. Uses
+                        `hfluxn.1` alone (not `hfluxn.0`, and not a sum of
+                        the two): this run's surface exchange is only
+                        actually driven through the `.1` tile (confirmed
+                        against `data/long_run` — `fakelnd`'s
+                        `total_heat_flux` is the exact sign-flipped mirror
+                        of `hfluxn.1`, `.0` isn't part of this run's real
+                        surface energy budget). `hfluxn.1` itself is
+                        negated before use: it's stored positive-upward
+                        (atm's own convention), but
+                        :func:`compute.atmosphere_heat_transport_radiative`
+                        needs a positive-*downward* surface flux (verified
+                        against `data/long_run` — without the negation the
+                        implied transport is ~27 PW at the pole where it
+                        should be ~0; negated, it's ~1 PW).
 """
 
 from pathlib import Path
@@ -231,12 +238,7 @@ def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
     if method == "dynamical":
         required = ("v_wind", "temperature", "normalized_surface_pressure")
     elif method == "radiative":
-        required = (
-            "shortwave_rad.ftop",
-            "longwave_rad.ftop",
-            "surface_flux.hfluxn.0",
-            "surface_flux.hfluxn.1",
-        )
+        required = ("shortwave_rad.ftop", "longwave_rad.ftop", "surface_flux.hfluxn.1")
     else:
         print(
             f"  [atm/heat_transport] skipping — unknown method '{method}' "
@@ -269,9 +271,7 @@ def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
                 toa_net = selection.select_along(
                     ds["shortwave_rad.ftop"], "time", time_arg
                 ) - selection.select_along(ds["longwave_rad.ftop"], "time", time_arg)
-                surface_net = selection.select_along(
-                    ds["surface_flux.hfluxn.0"], "time", time_arg
-                ) + selection.select_along(ds["surface_flux.hfluxn.1"], "time", time_arg)
+                surface_net = -selection.select_along(ds["surface_flux.hfluxn.1"], "time", time_arg)
                 aht = compute.atmosphere_heat_transport_radiative(toa_net, surface_net, x_dim, y_dim)
         except ValueError as exc:
             print(f"  [atm/heat_transport] skipping: {exc}")
