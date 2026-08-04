@@ -10,6 +10,9 @@ Supported diag_types:
   zonal_section   — latitude vs. depth cross-section
   profile         — domain-mean vertical profile
   timeseries      — area-weighted domain-mean time series
+  zonal_mean      — zonally-averaged 1D profile vs. latitude, for a surface
+                    field with no vertical dimension (e.g. SST/SSS); unlike
+                    zonal_section, no depth axis is involved
   overturning_streamfunction — meridional overturning streamfunction (Sv),
                     computed from `v`/`dzt`/`mask_T`
   heat_transport  — meridional ocean heat transport (PW), computed from
@@ -57,7 +60,8 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
         if varname not in ds:
             print(f"  [ocn/map_2d] skipping '{varname}' — not in dataset")
             continue
-        da = ds[varname]
+        da = selection.mask_land(ds[varname], ds)
+        da = selection.convert_kelvin_to_celsius(da)
         opts = var_opts.get(varname, {})
         name, units = _var_label(da)
 
@@ -110,7 +114,8 @@ def _run_zonal_section(ds, config: dict, output_dir: Path) -> None:
         if varname not in ds:
             print(f"  [ocn/zonal_section] skipping '{varname}' — not in dataset")
             continue
-        da = ds[varname]
+        da = selection.mask_land(ds[varname], ds)
+        da = selection.convert_kelvin_to_celsius(da)
         opts = var_opts.get(varname, {})
         name, units = _var_label(da)
 
@@ -160,7 +165,8 @@ def _run_profile(ds, config: dict, output_dir: Path) -> None:
         if varname not in ds:
             print(f"  [ocn/profile] skipping '{varname}' — not in dataset")
             continue
-        da = ds[varname]
+        da = selection.mask_land(ds[varname], ds)
+        da = selection.convert_kelvin_to_celsius(da)
         name, units = _var_label(da)
 
         for time_arg in time_args:
@@ -199,7 +205,8 @@ def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
         if varname not in ds:
             print(f"  [ocn/timeseries] skipping '{varname}' — not in dataset")
             continue
-        da = ds[varname]
+        da = selection.mask_land(ds[varname], ds)
+        da = selection.convert_kelvin_to_celsius(da)
         try:
             da1d = selection.reduce_to_timeseries(da, level_arg, region)
         except ValueError as exc:
@@ -218,6 +225,41 @@ def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
             running_mean_steps=running_mean_steps,
         )
         print(f"  [ocn/timeseries] saved {out_path}")
+
+
+def _run_zonal_mean(ds, config: dict, output_dir: Path) -> None:
+    diag_cfg = config["diagnostics"]["ocn"].get("zonal_mean", {})
+    out_cfg = config["output"]
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
+
+    for varname in diag_cfg.get("vars", []):
+        if varname not in ds:
+            print(f"  [ocn/zonal_mean] skipping '{varname}' — not in dataset")
+            continue
+        da = selection.mask_land(ds[varname], ds)
+        da = selection.convert_kelvin_to_celsius(da)
+        name, units = _var_label(da)
+        _, y_dim = grid.horizontal_dims(da)
+
+        for time_arg in time_args:
+            da1d = selection.reduce_to_meridional_profile(da, time_arg)
+
+            time_label = selection.time_label(time_arg)
+            suffix = time_label if len(time_args) > 1 else None
+            title = f"Ocean {name} zonal mean ({time_label})"
+            out_path = _out_path(
+                output_dir, "ocn", "zonal_mean", varname, out_cfg["format"], time_suffix=suffix
+            )
+            plot_utils.meridional_profile(
+                y=da1d[y_dim].values,
+                values=np.asarray(da1d.values, dtype=float),
+                y_label=y_dim,
+                title=title,
+                output_path=out_path,
+                units=units,
+                dpi=out_cfg["dpi"],
+            )
+            print(f"  [ocn/zonal_mean] saved {out_path}")
 
 
 def _run_overturning_streamfunction(ds, config: dict, output_dir: Path) -> None:
@@ -326,6 +368,7 @@ HANDLERS: dict[str, Callable] = {
     "zonal_section": _run_zonal_section,
     "profile": _run_profile,
     "timeseries": _run_timeseries,
+    "zonal_mean": _run_zonal_mean,
     "overturning_streamfunction": _run_overturning_streamfunction,
     "heat_transport": _run_heat_transport,
 }

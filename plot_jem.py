@@ -30,7 +30,7 @@ COMPONENT_MODULES = {
 }
 
 ALL_DIAG_TYPES = [
-    "map_2d", "zonal_section", "profile", "timeseries",
+    "map_2d", "zonal_section", "profile", "timeseries", "zonal_mean",
     "overturning_streamfunction", "heat_transport",
 ]
 

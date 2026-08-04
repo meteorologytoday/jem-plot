@@ -269,6 +269,32 @@ def profile(
     _save(fig, output_path, dpi)
 
 
+def meridional_profile(
+    y: np.ndarray,
+    values: np.ndarray,
+    y_label: str,
+    title: str,
+    output_path: str | Path,
+    units: str = "",
+    dpi: int = 150,
+) -> None:
+    """Save a 1D zonal-mean line plot (value vs. latitude/y).
+
+    Unlike :func:`meridional_transport`, there's no ``axhline(0)`` reference
+    line -- that's specific to transport diagnostics (which are physically
+    signed around zero) and would otherwise force fields like temperature
+    or salinity to autoscale down to 0, defeating the point of a plot meant
+    to show contrast within their real data range.
+    """
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(y, np.asarray(values), linewidth=1.5)
+    ax.set_xlabel(y_label)
+    ax.set_ylabel(units or "value")
+    ax.set_title(title, fontsize=11)
+    ax.grid(True, alpha=0.3)
+    _save(fig, output_path, dpi)
+
+
 def time_series(
     times: np.ndarray,
     values: np.ndarray | dict[str, np.ndarray],

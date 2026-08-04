@@ -105,11 +105,65 @@ def select_region(da, region):
     return da.sel({x_dim: slice(lon_min, lon_max), y_dim: slice(lat_min, lat_max)})
 
 
+def mask_land(da, ds, mask_name="mask_T", surface_mask_name="mask_surface_T"):
+    """Mask land-fill cells to NaN using a land-sea mask variable (1=ocean, 0=land).
+
+    jem's ocn tracer fields (e.g. ``temp``/``salt``) hold a fill value of
+    ``0`` on land rather than NaN; left as-is, that ``0`` sits inside (or
+    near) the variable's real data range and gets counted in reductions and
+    percentile-based color limits, washing out contrast between real ocean
+    values (most visible for ``salt``, where land's ``0`` is far below any
+    real salinity). ``mask_name`` (3D, sharing ``da``'s vertical dimension)
+    is tried first; ``surface_mask_name`` (2D, no vertical dimension) is
+    tried next for surface-only fields (e.g. ``sea_surface_salinity``) whose
+    dims don't include one. ``da`` is returned unchanged if neither mask is
+    present in ``ds`` or shares ``da``'s full grid (all dims other than
+    ``time``), since masking would otherwise broadcast a mismatched
+    dimension into it.
+    """
+    for name in (mask_name, surface_mask_name):
+        mask = ds.get(name)
+        if mask is not None and set(da.dims) - {"time"} == set(mask.dims):
+            return da.where(mask != 0)
+    return da
+
+
+def convert_kelvin_to_celsius(da):
+    """Convert a Kelvin-labeled DataArray to degrees Celsius for display.
+
+    jem's ocn component mixes temperature conventions -- e.g.
+    ``sea_surface_temperature`` is stored in Kelvin while ``temp``
+    (potential temperature) is already in degC (see each variable's
+    ``units`` attr) -- so this normalizes any Kelvin field to degC before
+    plotting, matching the rest of the ocean diagnostics. A no-op (returns
+    ``da`` unchanged) for anything not tagged ``units: K``.
+    """
+    if da.attrs.get("units") != "K":
+        return da
+    converted = da - 273.15
+    converted.attrs = dict(da.attrs)
+    converted.attrs["units"] = "deg C"
+    return converted
+
+
 def reduce_to_map(da, time_arg, level_arg):
     """Reduce to a 2D ``(y, x)`` field for :func:`jemdiag.plot_utils.global_map`."""
     da = select_along(da, "time", time_arg)
     da = select_along(da, grid.vertical_dim(da), level_arg)
     return da
+
+
+def reduce_to_meridional_profile(da, time_arg):
+    """Reduce to a 1D ``(y,)`` zonal-mean profile for a variable with no
+    vertical dimension (e.g. a surface field like ``sea_surface_salinity``).
+
+    Unlike :func:`reduce_to_zonal`, a vertical dimension is not required --
+    this is for 2D `(x, y)` surface fields, not the `(z, y)` cross-sections
+    ``reduce_to_zonal`` produces for 3D fields.
+    """
+    da = select_along(da, "time", time_arg)
+    x_dim, _ = grid.horizontal_dims(da)
+    return da.mean(dim=x_dim, keep_attrs=True)
 
 
 def reduce_to_timeseries(da, level_arg, region=None):
