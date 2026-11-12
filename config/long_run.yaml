@@ -32,10 +32,23 @@ diagnostics:
   # block may still set its own `time` to opt out of the shared default.
   time: 481:500
 
+  # Draw Earth coastlines on every map_2d figure. Only meaningful for runs
+  # configured with real Earth topography — an idealized/aqua-planet run
+  # would get an outline that doesn't match its own land-sea mask. May also
+  # be a mapping of style overrides ({resolution: 110m|50m|10m, color,
+  # linewidth}), and any map_2d block may set its own `coastlines` to
+  # override this shared default.
+  coastlines: false
+
+  # Longitude (degrees east) at the center of every map_2d figure; 0 if
+  # omitted. Set e.g. 200 to keep the Pacific whole instead of split across
+  # the two edges. Any map_2d block may override this shared default.
+  central_longitude: 0
+
   atm:
     map_2d:
       level: mean
-      vars: [temperature, u_wind, v_wind, specific_humidity, shortwave_rad.rsds, surface_flux.tsfc]
+      vars: [temperature, u_wind, v_wind, specific_humidity, shortwave_rad.rsds, surface_flux.tsfc, precipitation]
       # Optional per-variable overrides. Any key may be omitted to keep the
       # automatic default (percentile-based color limits, DEFAULT_CMAPS entry
       # or "viridis").
@@ -50,11 +63,15 @@ diagnostics:
     timeseries:
       level: mean
       vars: [surface_flux.tsfc, shortwave_rad.rsds]
+    zonal_mean:
+      vars: [precipitation]
+    heat_transport:
+      method: radiative
 
   ocn:
     map_2d:
       level: mean
-      vars: [sea_surface_temperature]
+      vars: [sea_surface_temperature, sea_surface_salinity]
     zonal_section:
       # depth index 0 = seafloor, last index = surface (jem convention);
       # invert_yaxis: false keeps the surface drawn at the top of the chart.
@@ -71,7 +88,11 @@ diagnostics:
         - [0, 360]
         - [0, 60]
         - [60, 360]
-    heat_transport: {}
+    heat_transport:
+       lon_bands: 
+          - [0, 360]
+          - [0, 60]
+          - [60, 360]
 
   fakelnd:
     map_2d:
