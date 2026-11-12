@@ -98,15 +98,23 @@ def overturning_streamfunction(v, dzt, mask, x_dim, y_dim, z_dim):
     jem's ocn depth index runs from the seafloor (index 0, thickest layers)
     to the surface (last index, thinnest layers) — verified against
     ``data/long_run`` by matching the index-14 temperature profile to sea
-    surface temperature. A cumulative sum from index 0 upward therefore
-    yields psi = 0 at the seafloor and the full water-column transport at
-    the surface, at each cumulative index representing the transport
-    integrated from the seafloor up through that layer.
+    surface temperature.
+
+    By the standard MOC sign convention (e.g. RAPID/AMOC diagnostics), psi
+    is defined by integrating downward from the surface, so a
+    poleward-flowing surface branch plus an equatorward-flowing deep branch
+    (the classic thermohaline "conveyor belt" cell) comes out positive.
+    Since the full water column's net transport is ~0 by mass conservation
+    (verified against ``data/long_run``, holding at every latitude to
+    within floating-point noise), integrating downward from the surface is
+    equivalent to the negative of a cumulative sum from the seafloor (index
+    0) upward — that negation is what's used here, since it's simplest and
+    preserves the ~0 surface value exactly.
     """
     dx = zonal_cell_width(v[x_dim].values, v[y_dim].values)
     dx_da = xr.DataArray(dx, dims=[y_dim], coords={y_dim: v[y_dim]})
     transport = (v * mask * dx_da * dzt).sum(dim=x_dim)  # m^3/s per layer, dims (y_dim, z_dim)
-    psi = transport.cumsum(dim=z_dim) / 1.0e6  # Sverdrups
+    psi = -transport.cumsum(dim=z_dim) / 1.0e6  # Sverdrups
     return psi.transpose(z_dim, y_dim)
 
 

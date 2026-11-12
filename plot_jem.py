@@ -120,8 +120,10 @@ def apply_var_filter(config: dict, vars_filter: list[str] | None) -> dict:
     diag = cfg.get("diagnostics", {})
     vset = set(vars_filter)
     for comp_cfg in diag.values():
+        if not isinstance(comp_cfg, dict):
+            continue  # e.g. the shared top-level `diagnostics.time` default
         for dtype_cfg in comp_cfg.values():
-            if "vars" in dtype_cfg:
+            if isinstance(dtype_cfg, dict) and "vars" in dtype_cfg:
                 dtype_cfg["vars"] = [v for v in dtype_cfg["vars"] if v in vset]
     return cfg
 
@@ -151,7 +153,7 @@ def cmd_run(args) -> int:
 
     print(f"Loading data for experiment '{exp_name}' from {config['data']['run_dir']} ...")
     try:
-        data = data_loader.load_all(config)
+        data = data_loader.load_all(config, diag_types=args.diag_types)
     except FileNotFoundError as exc:
         print(f"Error loading data: {exc}", file=sys.stderr)
         return 1

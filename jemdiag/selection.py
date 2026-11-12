@@ -67,12 +67,25 @@ def time_label(arg) -> str:
     return f"t{int(arg)}"
 
 
-def select_along(da, dim, arg):
+def select_along(da, dim, arg, by_label=False):
     """Select or reduce ``da`` along ``dim`` according to ``arg``.
 
     If ``dim`` is ``None`` or not present in ``da``, ``da`` is returned
     unchanged (so callers don't need to special-case variables that lack a
     given dimension, e.g. a vertical level).
+
+    ``by_label`` selects by the dimension's *coordinate values* (``.sel``)
+    instead of raw position (``.isel``). Needed for ``time``: when
+    :func:`jemdiag.data_loader.load_component` only loads a file-index
+    sub-range, the ``time`` coordinate still carries each record's true
+    global index (see its docstring), so a config spec like ``"481:500"``
+    must be resolved against that label, not position 481 of however many
+    records actually got loaded. Level selection stays position-based
+    (the default) since level values are physical (e.g. sigma), not a
+    sequential record index. A slice's ``stop`` is treated as exclusive
+    either way, matching ``isel`` -- ``.sel`` slicing is inclusive of
+    ``stop``, so it's adjusted by one to keep identical results whether or
+    not the full time range was loaded (values equal position when it is).
     """
     if dim is None or dim not in da.dims:
         return da
@@ -80,8 +93,13 @@ def select_along(da, dim, arg):
     if parsed == "mean":
         return da.mean(dim=dim, keep_attrs=True)
     if isinstance(parsed, slice):
-        return da.isel({dim: parsed}).mean(dim=dim, keep_attrs=True)
-    return da.isel({dim: parsed})
+        if by_label:
+            stop = None if parsed.stop is None else parsed.stop - 1
+            selected = da.sel({dim: slice(parsed.start, stop)})
+        else:
+            selected = da.isel({dim: parsed})
+        return selected.mean(dim=dim, keep_attrs=True)
+    return da.sel({dim: parsed}) if by_label else da.isel({dim: parsed})
 
 
 def select_region(da, region):
@@ -103,6 +121,54 @@ def select_region(da, region):
             f"'{x_dim}'/'{y_dim}' are index-based for this component"
         )
     return da.sel({x_dim: slice(lon_min, lon_max), y_dim: slice(lat_min, lat_max)})
+
+
+def select_lon_band(da, x_dim, lon_range):
+    """Select a longitude sub-range ``(lon_min, lon_max)`` from ``da``.
+
+    Returns ``da`` unchanged if ``lon_range`` is ``None`` (no restriction,
+    i.e. the full/global zonal integral). Raises ``ValueError`` if
+    ``x_dim``'s coordinate is synthetic (index-based), since a longitude
+    band is meaningless in that case. Like :func:`select_region`, a band
+    that wraps across the 0/360 boundary is not supported -- ``lon_min``
+    must be less than ``lon_max``.
+    """
+    if lon_range is None:
+        return da
+    lon_min, lon_max = lon_range
+    if da[x_dim].attrs.get("jemdiag_synthetic"):
+        raise ValueError(
+            f"a longitude band requires a real '{x_dim}' coordinate, but "
+            f"it is index-based for this component"
+        )
+    return da.sel({x_dim: slice(lon_min, lon_max)})
+
+
+def normalize_lon_bands(arg):
+    """Normalize a ``lon_bands`` config value to a list of bands.
+
+    ``None`` (no restriction) or a single ``[lon_min, lon_max]`` pair is
+    wrapped in a single-element list; an explicit list of such pairs (e.g.
+    ``[[280, 360], [120, 280]]``) is returned unchanged. Callers loop over
+    the result to produce one plot per band, mirroring
+    :func:`normalize_time_args`.
+    """
+    if arg is None:
+        return [None]
+    if isinstance(arg[0], (list, tuple)):
+        return list(arg)
+    return [arg]
+
+
+def lon_band_label(lon_range):
+    """Human/filename-friendly label for a longitude band.
+
+    Returns ``None`` for the unrestricted (global) case.
+    """
+    if lon_range is None:
+        return None
+    lon_min, lon_max = lon_range
+    return f"lon{lon_min:g}-{lon_max:g}"
 
 
 def mask_land(da, ds, mask_name="mask_T", surface_mask_name="mask_surface_T"):
@@ -148,7 +214,7 @@ def convert_kelvin_to_celsius(da):
 
 def reduce_to_map(da, time_arg, level_arg):
     """Reduce to a 2D ``(y, x)`` field for :func:`jemdiag.plot_utils.global_map`."""
-    da = select_along(da, "time", time_arg)
+    da = select_along(da, "time", time_arg, by_label=True)
     da = select_along(da, grid.vertical_dim(da), level_arg)
     return da
 
@@ -161,7 +227,7 @@ def reduce_to_meridional_profile(da, time_arg):
     this is for 2D `(x, y)` surface fields, not the `(z, y)` cross-sections
     ``reduce_to_zonal`` produces for 3D fields.
     """
-    da = select_along(da, "time", time_arg)
+    da = select_along(da, "time", time_arg, by_label=True)
     x_dim, _ = grid.horizontal_dims(da)
     return da.mean(dim=x_dim, keep_attrs=True)
 
@@ -181,7 +247,7 @@ def reduce_to_zonal(da, time_arg):
             "Zonal-mean plots require a variable with a vertical "
             "dimension (level/depth)"
         )
-    da = select_along(da, "time", time_arg)
+    da = select_along(da, "time", time_arg, by_label=True)
     x_dim, _ = grid.horizontal_dims(da)
     return da.mean(dim=x_dim, keep_attrs=True)
 
@@ -193,7 +259,7 @@ def reduce_to_profile(da, time_arg, region=None):
             "Profile plots require a variable with a vertical "
             "dimension (level/depth)"
         )
-    da = select_along(da, "time", time_arg)
+    da = select_along(da, "time", time_arg, by_label=True)
     da = select_region(da, region)
     x_dim, y_dim = grid.horizontal_dims(da)
     return compute.weighted_mean(da, dims=[x_dim, y_dim])

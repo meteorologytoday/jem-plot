@@ -61,6 +61,26 @@ def horizontal_coords(da, x_dim, y_dim):
     return np.asarray(da[x_dim].values), np.asarray(da[y_dim].values), False
 
 
+def ocean_depth_from_dzt(dzt):
+    """Return per-layer physical ocean depth (m, negative below the surface).
+
+    ``dzt`` is layer thickness (m), ordered from the seafloor (index 0,
+    thickest layers) to the surface (last index, thinnest layers) — see
+    :mod:`jemdiag.compute`. Each returned value is that layer's cell-center
+    depth, computed by summing thickness from the surface downward, negated
+    so that larger (less negative) values are shallower — 0 near the
+    surface, increasingly negative toward the seafloor. This mirrors how
+    the raw depth index already sorts (larger index = shallower), so
+    swapping the index coordinate for this one leaves the default
+    "surface at the top of the chart" layout (``invert_yaxis: false``)
+    unchanged.
+    """
+    thickness = np.asarray(dzt.values, dtype=float)
+    depth_to_bottom = np.cumsum(thickness[::-1])[::-1]
+    depth_center = depth_to_bottom - thickness / 2
+    return -depth_center
+
+
 def has_real_horizontal_coords(da, x_dim, y_dim):
     """Return ``True`` unless both horizontal dims carry synthetic (index) coords."""
     return not (

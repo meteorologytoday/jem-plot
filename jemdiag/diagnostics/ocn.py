@@ -49,9 +49,34 @@ def _var_label(da) -> tuple[str, str]:
     return name, units
 
 
+def _depth_coord(ds, z_dim, index_values):
+    """Return ``(z_values, z_label)`` for a vertical axis.
+
+    Uses physical depth (m, negative below the surface) derived from
+    ``dzt`` when available, so plots show real depth instead of a bare
+    layer index; falls back to the raw index (previous behavior) if
+    ``dzt`` is missing from the dataset.
+    """
+    if "dzt" not in ds:
+        return index_values, z_dim
+    return grid.ocean_depth_from_dzt(ds["dzt"]), "depth (m)"
+
+
+def _combine_suffix(parts):
+    """Join non-empty suffix parts (e.g. time label, lon-band label) with
+    '_' for a filename suffix, or return ``None`` if there's nothing to add.
+    """
+    parts = [p for p in parts if p]
+    return "_".join(parts) if parts else None
+
+
 def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
     diag_cfg = config["diagnostics"]["ocn"].get("map_2d", {})
     out_cfg = config["output"]
+    central_longitude = plot_utils.resolve_central_longitude(
+        diag_cfg, config["diagnostics"]
+    )
+    coastlines = plot_utils.resolve_coastlines(diag_cfg, config["diagnostics"])
     time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     level_arg = diag_cfg.get("level", "mean")
     var_opts: dict = diag_cfg.get("var_opts", {})
@@ -76,8 +101,9 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
             x, y, _ = grid.horizontal_coords(da2d, x_dim, y_dim)
             da2d = da2d.transpose(y_dim, x_dim)
 
-            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
-            title = f"Ocean {name}" + (f" ({suffix})" if suffix else "")
+            time_label = selection.time_label(time_arg)
+            suffix = time_label if len(time_args) > 1 else None
+            title = f"Ocean {name} ({time_label})"
             out_path = _out_path(
                 output_dir, "ocn", "map_2d", varname, out_cfg["format"], time_suffix=suffix
             )
@@ -93,9 +119,23 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
             if grid.has_real_horizontal_coords(da2d, x_dim, y_dim):
                 plot_utils.global_map(
                     data=da2d, lon=x, lat=y,
+                    central_longitude=central_longitude, coastlines=coastlines,
                     title=title, output_path=out_path, **common_kwargs,
                 )
             else:
+                # Both options are cartopy-only; this grid has no real lon/lat
+                # coordinates, so the map falls back to plain index axes.
+                ignored = [
+                    name for name, value in
+                    (("coastlines", coastlines), ("central_longitude", central_longitude))
+                    if value
+                ]
+                if ignored:
+                    print(
+                        f"  [ocn/map_2d] ignoring {', '.join(ignored)} for "
+                        f"'{varname}' — this grid has no real lon/lat "
+                        "coordinates, so the map uses index axes"
+                    )
                 plot_utils.index_map(
                     data=da2d, x=x, y=y, x_label=x_dim, y_label=y_dim,
                     title=title, output_path=out_path, **common_kwargs,
@@ -129,18 +169,20 @@ def _run_zonal_section(ds, config: dict, output_dir: Path) -> None:
             z_dim = grid.vertical_dim(da2d)
             y_dim = [d for d in da2d.dims if d != z_dim][0]
             da2d = da2d.transpose(z_dim, y_dim)
+            z_values, z_label = _depth_coord(ds, z_dim, da2d[z_dim].values)
 
-            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
-            title = f"Ocean {name} zonal mean" + (f" ({suffix})" if suffix else "")
+            time_label = selection.time_label(time_arg)
+            suffix = time_label if len(time_args) > 1 else None
+            title = f"Ocean {name} zonal mean ({time_label})"
             out_path = _out_path(
                 output_dir, "ocn", "zonal_section", varname, out_cfg["format"], time_suffix=suffix
             )
             plot_utils.zonal_section(
                 data=da2d,
                 y=da2d[y_dim].values,
-                z=da2d[z_dim].values,
+                z=z_values,
                 y_label=y_dim,
-                z_label=z_dim,
+                z_label=z_label,
                 title=title,
                 output_path=out_path,
                 cmap=opts.get("cmap"),
@@ -177,15 +219,17 @@ def _run_profile(ds, config: dict, output_dir: Path) -> None:
                 continue
 
             z_dim = grid.vertical_dim(da1d)
-            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
-            title = f"Ocean {name} profile" + (f" ({suffix})" if suffix else "")
+            z_values, z_label = _depth_coord(ds, z_dim, da1d[z_dim].values)
+            time_label = selection.time_label(time_arg)
+            suffix = time_label if len(time_args) > 1 else None
+            title = f"Ocean {name} profile ({time_label})"
             out_path = _out_path(
                 output_dir, "ocn", "profile", varname, out_cfg["format"], time_suffix=suffix
             )
             plot_utils.profile(
                 data=da1d,
-                z=da1d[z_dim].values,
-                z_label=z_dim,
+                z=z_values,
+                z_label=z_label,
                 title=title,
                 output_path=out_path,
                 units=units,
@@ -268,6 +312,7 @@ def _run_overturning_streamfunction(ds, config: dict, output_dir: Path) -> None:
         return
     out_cfg = config["output"]
     time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
+    lon_bands = selection.normalize_lon_bands(diag_cfg.get("lon_bands"))
     invert_yaxis = diag_cfg.get("invert_yaxis", False)
 
     required = ("v", "dzt", "mask_T")
@@ -283,29 +328,46 @@ def _run_overturning_streamfunction(ds, config: dict, output_dir: Path) -> None:
         return
 
     for time_arg in time_args:
-        v = selection.select_along(ds["v"], "time", time_arg)
-        psi = compute.overturning_streamfunction(v, ds["dzt"], ds["mask_T"], x_dim, y_dim, z_dim)
+        v_t = selection.select_along(ds["v"], "time", time_arg, by_label=True)
 
-        suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
-        title = "Meridional overturning streamfunction" + (f" ({suffix})" if suffix else "")
-        out_path = _out_path(
-            output_dir, "ocn", "overturning_streamfunction", "psi", out_cfg["format"], time_suffix=suffix
-        )
-        plot_utils.overturning_streamfunction(
-            psi=psi,
-            y=psi[y_dim].values,
-            z=psi[z_dim].values,
-            y_label=y_dim,
-            z_label=z_dim,
-            title=title,
-            output_path=out_path,
-            vmin=diag_cfg.get("vmin"),
-            vmax=diag_cfg.get("vmax"),
-            n_levels=diag_cfg.get("n_levels", out_cfg.get("n_levels", 20)),
-            invert_yaxis=invert_yaxis,
-            dpi=out_cfg["dpi"],
-        )
-        print(f"  [ocn/overturning_streamfunction] saved {out_path}")
+        for lon_band in lon_bands:
+            try:
+                v = selection.select_lon_band(v_t, x_dim, lon_band)
+                mask = selection.select_lon_band(ds["mask_T"], x_dim, lon_band)
+            except ValueError as exc:
+                print(f"  [ocn/overturning_streamfunction] skipping: {exc}")
+                continue
+            psi = compute.overturning_streamfunction(v, ds["dzt"], mask, x_dim, y_dim, z_dim)
+            z_values, z_label = _depth_coord(ds, z_dim, psi[z_dim].values)
+
+            time_label = selection.time_label(time_arg)
+            title_parts = [time_label]
+            suffix_parts = [time_label] if len(time_args) > 1 else []
+            if len(lon_bands) > 1:
+                band_label = selection.lon_band_label(lon_band)
+                if band_label:
+                    suffix_parts.append(band_label)
+                    title_parts.append(band_label)
+            suffix = _combine_suffix(suffix_parts)
+            title = f"Meridional overturning streamfunction ({', '.join(title_parts)})"
+            out_path = _out_path(
+                output_dir, "ocn", "overturning_streamfunction", "psi", out_cfg["format"], time_suffix=suffix
+            )
+            plot_utils.overturning_streamfunction(
+                psi=psi,
+                y=psi[y_dim].values,
+                z=z_values,
+                y_label=y_dim,
+                z_label=z_label,
+                title=title,
+                output_path=out_path,
+                vmin=diag_cfg.get("vmin"),
+                vmax=diag_cfg.get("vmax"),
+                n_levels=diag_cfg.get("n_levels", out_cfg.get("n_levels", 20)),
+                invert_yaxis=invert_yaxis,
+                dpi=out_cfg["dpi"],
+            )
+            print(f"  [ocn/overturning_streamfunction] saved {out_path}")
 
 
 def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
@@ -314,6 +376,7 @@ def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
         return
     out_cfg = config["output"]
     time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
+    lon_bands = selection.normalize_lon_bands(diag_cfg.get("lon_bands"))
 
     required = ("v", "temp", "dzt", "mask_T")
     missing = [name for name in required if name not in ds]
@@ -328,25 +391,42 @@ def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
         return
 
     for time_arg in time_args:
-        v = selection.select_along(ds["v"], "time", time_arg)
-        temp = selection.select_along(ds["temp"], "time", time_arg)
-        mht = compute.meridional_heat_transport(v, temp, ds["dzt"], ds["mask_T"], x_dim, y_dim, z_dim)
+        v_t = selection.select_along(ds["v"], "time", time_arg, by_label=True)
+        temp_t = selection.select_along(ds["temp"], "time", time_arg, by_label=True)
 
-        suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
-        title = "Meridional ocean heat transport" + (f" ({suffix})" if suffix else "")
-        out_path = _out_path(
-            output_dir, "ocn", "heat_transport", "mht", out_cfg["format"], time_suffix=suffix
-        )
-        plot_utils.meridional_transport(
-            y=mht[y_dim].values,
-            values=np.asarray(mht.values, dtype=float),
-            y_label=y_dim,
-            title=title,
-            output_path=out_path,
-            units="PW",
-            dpi=out_cfg["dpi"],
-        )
-        print(f"  [ocn/heat_transport] saved {out_path}")
+        for lon_band in lon_bands:
+            try:
+                v = selection.select_lon_band(v_t, x_dim, lon_band)
+                temp = selection.select_lon_band(temp_t, x_dim, lon_band)
+                mask = selection.select_lon_band(ds["mask_T"], x_dim, lon_band)
+            except ValueError as exc:
+                print(f"  [ocn/heat_transport] skipping: {exc}")
+                continue
+            mht = compute.meridional_heat_transport(v, temp, ds["dzt"], mask, x_dim, y_dim, z_dim)
+
+            time_label = selection.time_label(time_arg)
+            title_parts = [time_label]
+            suffix_parts = [time_label] if len(time_args) > 1 else []
+            if len(lon_bands) > 1:
+                band_label = selection.lon_band_label(lon_band)
+                if band_label:
+                    suffix_parts.append(band_label)
+                    title_parts.append(band_label)
+            suffix = _combine_suffix(suffix_parts)
+            title = f"Meridional ocean heat transport ({', '.join(title_parts)})"
+            out_path = _out_path(
+                output_dir, "ocn", "heat_transport", "mht", out_cfg["format"], time_suffix=suffix
+            )
+            plot_utils.meridional_transport(
+                y=mht[y_dim].values,
+                values=np.asarray(mht.values, dtype=float),
+                y_label=y_dim,
+                title=title,
+                output_path=out_path,
+                units="PW",
+                dpi=out_cfg["dpi"],
+            )
+            print(f"  [ocn/heat_transport] saved {out_path}")
 
 
 def _out_path(

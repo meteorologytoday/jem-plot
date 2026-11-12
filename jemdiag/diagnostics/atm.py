@@ -7,6 +7,12 @@ Supported diag_types:
   zonal_section   — latitude vs. level cross-section
   profile         — domain-mean vertical profile
   timeseries      — area-weighted domain-mean time series
+  zonal_mean      — zonally-averaged 1D profile vs. latitude, for a surface
+                    field with no vertical dimension. Supports the derived
+                    pseudo-variable `precipitation` (`condensation.precls`
+                    + `convection.precnv` — jem reports large-scale and
+                    convective precipitation separately, with no combined
+                    total variable)
   heat_transport  — meridional atmospheric heat transport (PW). Two
                     methods, picked via config `method` (default
                     `dynamical`):
@@ -60,15 +66,19 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
     out_cfg = config["output"]
     grid_cfg = config.get("grids", {}).get("atm", {})
     projection = grid_cfg.get("projection", "PlateCarree")
+    central_longitude = plot_utils.resolve_central_longitude(
+        diag_cfg, config["diagnostics"]
+    )
+    coastlines = plot_utils.resolve_coastlines(diag_cfg, config["diagnostics"])
     time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     level_arg = diag_cfg.get("level", "mean")
     var_opts: dict = diag_cfg.get("var_opts", {})
 
     for varname in diag_cfg.get("vars", []):
-        if varname not in ds:
+        da = _resolve_var(ds, varname)
+        if da is None:
             print(f"  [atm/map_2d] skipping '{varname}' — not in dataset")
             continue
-        da = ds[varname]
         opts = var_opts.get(varname, {})
         name, units = _var_label(da)
 
@@ -83,8 +93,9 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
             lon, lat, _ = grid.horizontal_coords(da2d, x_dim, y_dim)
             da2d = da2d.transpose(y_dim, x_dim)
 
-            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
-            title = f"Atmos {name}" + (f" ({suffix})" if suffix else "")
+            time_label = selection.time_label(time_arg)
+            suffix = time_label if len(time_args) > 1 else None
+            title = f"Atmos {name} ({time_label})"
             out_path = _out_path(
                 output_dir, "atm", "map_2d", varname, out_cfg["format"], time_suffix=suffix
             )
@@ -102,6 +113,8 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
                 n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
                 dpi=out_cfg["dpi"],
                 projection=projection,
+                central_longitude=central_longitude,
+                coastlines=coastlines,
             )
             print(f"  [atm/map_2d] saved {out_path}")
 
@@ -132,8 +145,9 @@ def _run_zonal_section(ds, config: dict, output_dir: Path) -> None:
             y_dim = [d for d in da2d.dims if d != z_dim][0]
             da2d = da2d.transpose(z_dim, y_dim)
 
-            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
-            title = f"Atmos {name} zonal mean" + (f" ({suffix})" if suffix else "")
+            time_label = selection.time_label(time_arg)
+            suffix = time_label if len(time_args) > 1 else None
+            title = f"Atmos {name} zonal mean ({time_label})"
             out_path = _out_path(
                 output_dir, "atm", "zonal_section", varname, out_cfg["format"], time_suffix=suffix
             )
@@ -178,8 +192,9 @@ def _run_profile(ds, config: dict, output_dir: Path) -> None:
                 continue
 
             z_dim = grid.vertical_dim(da1d)
-            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
-            title = f"Atmos {name} profile" + (f" ({suffix})" if suffix else "")
+            time_label = selection.time_label(time_arg)
+            suffix = time_label if len(time_args) > 1 else None
+            title = f"Atmos {name} profile ({time_label})"
             out_path = _out_path(
                 output_dir, "atm", "profile", varname, out_cfg["format"], time_suffix=suffix
             )
@@ -227,6 +242,58 @@ def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
         print(f"  [atm/timeseries] saved {out_path}")
 
 
+def _resolve_var(ds, varname):
+    """Return the DataArray for ``varname``, or ``None`` if unavailable.
+
+    Handles ``precipitation`` as the derived sum of large-scale and
+    convective precip (``condensation.precls`` + ``convection.precnv``),
+    since jem reports those separately with no combined total variable.
+    """
+    if varname == "precipitation":
+        required = ("condensation.precls", "convection.precnv")
+        if not all(v in ds for v in required):
+            return None
+        total = ds["condensation.precls"] + ds["convection.precnv"]
+        total.name = "precipitation"
+        total.attrs = {"long_name": "precipitation"}
+        return total
+    return ds.get(varname)
+
+
+def _run_zonal_mean(ds, config: dict, output_dir: Path) -> None:
+    diag_cfg = config["diagnostics"]["atm"].get("zonal_mean", {})
+    out_cfg = config["output"]
+    time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
+
+    for varname in diag_cfg.get("vars", []):
+        da = _resolve_var(ds, varname)
+        if da is None:
+            print(f"  [atm/zonal_mean] skipping '{varname}' — not in dataset")
+            continue
+        name, units = _var_label(da)
+        _, y_dim = grid.horizontal_dims(da)
+
+        for time_arg in time_args:
+            da1d = selection.reduce_to_meridional_profile(da, time_arg)
+
+            time_label = selection.time_label(time_arg)
+            suffix = time_label if len(time_args) > 1 else None
+            title = f"Atmos {name} zonal mean ({time_label})"
+            out_path = _out_path(
+                output_dir, "atm", "zonal_mean", varname, out_cfg["format"], time_suffix=suffix
+            )
+            plot_utils.meridional_profile(
+                y=da1d[y_dim].values,
+                values=np.asarray(da1d.values, dtype=float),
+                y_label=y_dim,
+                title=title,
+                output_path=out_path,
+                units=units,
+                dpi=out_cfg["dpi"],
+            )
+            print(f"  [atm/zonal_mean] saved {out_path}")
+
+
 def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
     diag_cfg = config["diagnostics"]["atm"].get("heat_transport")
     if diag_cfg is None:
@@ -263,15 +330,15 @@ def _run_heat_transport(ds, config: dict, output_dir: Path) -> None:
     for time_arg in time_args:
         try:
             if method == "dynamical":
-                v = selection.select_along(ds["v_wind"], "time", time_arg)
-                temp = selection.select_along(ds["temperature"], "time", time_arg)
-                ps = selection.select_along(ds["normalized_surface_pressure"], "time", time_arg)
+                v = selection.select_along(ds["v_wind"], "time", time_arg, by_label=True)
+                temp = selection.select_along(ds["temperature"], "time", time_arg, by_label=True)
+                ps = selection.select_along(ds["normalized_surface_pressure"], "time", time_arg, by_label=True)
                 aht = compute.atmosphere_heat_transport(v, temp, ps, x_dim, y_dim, z_dim)
             else:
                 toa_net = selection.select_along(
-                    ds["shortwave_rad.ftop"], "time", time_arg
-                ) - selection.select_along(ds["longwave_rad.ftop"], "time", time_arg)
-                surface_net = -selection.select_along(ds["surface_flux.hfluxn.1"], "time", time_arg)
+                    ds["shortwave_rad.ftop"], "time", time_arg, by_label=True
+                ) - selection.select_along(ds["longwave_rad.ftop"], "time", time_arg, by_label=True)
+                surface_net = -selection.select_along(ds["surface_flux.hfluxn.1"], "time", time_arg, by_label=True)
                 aht = compute.atmosphere_heat_transport_radiative(toa_net, surface_net, x_dim, y_dim)
         except ValueError as exc:
             print(f"  [atm/heat_transport] skipping: {exc}")
@@ -314,5 +381,6 @@ HANDLERS: dict[str, Callable] = {
     "zonal_section": _run_zonal_section,
     "profile": _run_profile,
     "timeseries": _run_timeseries,
+    "zonal_mean": _run_zonal_mean,
     "heat_transport": _run_heat_transport,
 }
