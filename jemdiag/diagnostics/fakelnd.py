@@ -36,6 +36,10 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
     out_cfg = config["output"]
     grid_cfg = config.get("grids", {}).get("fakelnd", {})
     projection = grid_cfg.get("projection", "PlateCarree")
+    central_longitude = plot_utils.resolve_central_longitude(
+        diag_cfg, config["diagnostics"]
+    )
+    coastlines = plot_utils.resolve_coastlines(diag_cfg, config["diagnostics"])
     time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     var_opts: dict = diag_cfg.get("var_opts", {})
 
@@ -58,8 +62,9 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
             lon, lat, _ = grid.horizontal_coords(da2d, x_dim, y_dim)
             da2d = da2d.transpose(y_dim, x_dim)
 
-            suffix = selection.time_label(time_arg) if len(time_args) > 1 else None
-            title = f"fakelnd {name}" + (f" ({suffix})" if suffix else "")
+            time_label = selection.time_label(time_arg)
+            suffix = time_label if len(time_args) > 1 else None
+            title = f"fakelnd {name} ({time_label})"
             out_path = _out_path(
                 output_dir, "fakelnd", "map_2d", varname, out_cfg["format"], time_suffix=suffix
             )
@@ -77,6 +82,8 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
                 n_levels=opts.get("n_levels", out_cfg.get("n_levels", 20)),
                 dpi=out_cfg["dpi"],
                 projection=projection,
+                central_longitude=central_longitude,
+                coastlines=coastlines,
             )
             print(f"  [fakelnd/map_2d] saved {out_path}")
 

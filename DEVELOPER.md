@@ -145,6 +145,83 @@ zonal_section overturning_streamfunction heat_transport`); output PNGs were
 visually inspected (see above for the sanity-check results) alongside the
 `invert_yaxis` orientation fix for `zonal_section`.
 
+On 2026-07-31, several fixes/additions were made and re-verified against
+`data/long_run`:
+- **Land-fill contrast bug.** `temp`/`salt` (and any ocn field sharing
+  `mask_T`'s full grid) hold `0` on land rather than NaN, which sat inside
+  the real data range and washed out contrast (worst for `salt`, whose
+  land-`0` is far below any real salinity) — fixed via
+  `selection.mask_land`, applied in `ocn.py`'s `map_2d`/`zonal_section`/
+  `profile`/`timeseries` handlers.
+- **Physical ocean depth.** `zonal_section`/`profile`/
+  `overturning_streamfunction` now plot real depth (m, negative below the
+  surface, via `grid.ocean_depth_from_dzt`) instead of the bare layer
+  index, falling back to the index if `dzt` is missing.
+- **Lat/lon gridlines** added to `global_map` (cartopy `gridlines(draw_labels=True)`) — previously map_2d plots had no coordinate labels at all.
+- **Overturning streamfunction sign fix.** Was integrating bottom-up with
+  no sign flip, giving the opposite sign from the standard MOC convention
+  (a poleward-surface/equatorward-deep cell should read positive) — see
+  `compute.overturning_streamfunction`'s docstring for the derivation.
+  Cross-checked against `ocn.heat_transport` (which has no such ambiguity,
+  being a direct integral, not a cumsum): the fixed sign now agrees with
+  heat transport's positive-in-NH result for a poleward-surface-flow cell.
+- **`atm.heat_transport`** added: meridional atmospheric (sensible) heat
+  transport, mirroring `ocn.heat_transport`'s structure but integrating
+  over SPEEDY's sigma coordinate via `normalized_surface_pressure` and the
+  fixed 7-/8-level sigma half-level table (`compute.
+  SPEEDY_SIGMA_HALF_LEVELS`, matching `jcm.physics.speedy.
+  physical_constants.SIGMA_LAYER_BOUNDARIES` — full-level sigma spacing
+  does not recover these boundaries, so they're reproduced exactly rather
+  than approximated). Uses time-averaged `v`/`T`, so it captures only the
+  mean-circulation transport, not the transient-eddy term that dominates
+  real mid-latitude atmospheric heat transport — expect a curve that's
+  peaky near the equator (Hadley cell) and flat at mid/high latitudes.
+- **`lon_bands`** added to `ocn.overturning_streamfunction`/
+  `ocn.heat_transport`, restricting the zonal integral to a longitude
+  sub-range (e.g. one ocean basin); accepts a single `[lon_min, lon_max]`
+  or a list of them for one plot per band, same list-expansion pattern as
+  `time` (`selection.normalize_lon_bands`/`select_lon_band`).
+- **`sea_surface_salinity`** added to `ocn.map_2d.vars` in
+  `config/long_run.yaml` (already had a `DEFAULT_CMAPS` entry, just wasn't
+  wired into the example config).
+- **`apply_var_filter` bug fix** (`plot_jem.py`): iterated over every
+  value in `config["diagnostics"]` assuming all were per-component dicts;
+  broke (`AttributeError`) once `diagnostics.time` (a shared scalar
+  default, added earlier the same day) was introduced. Now skips
+  non-dict entries.
+
+On 2026-09-02, a **`coastlines` toggle** was added for `map_2d`
+(`plot_utils.resolve_coastlines` -> `plot_utils.global_map`, wired into
+`atm`/`ocn`/`fakelnd`'s `_run_map_2d`). Resolution order mirrors `time`:
+diag_type block -> shared `diagnostics.coastlines` -> off. Notes:
+- **Off by default**, reversing the earlier "no coastlines" decision only
+  where a config opts in: jem runs are idealized unless configured with
+  real Earth topography, and drawing Earth's coastline over an
+  aqua-planet/idealized land-sea mask would be actively misleading. Enabled
+  in `config/real_topo-reglatlon.yaml` only.
+- The config value is a bool, or a mapping restricted to exactly
+  `resolution`/`color`/`linewidth` (`plot_utils.COASTLINE_DEFAULTS`); any
+  other key, a bad `resolution`, or a non-mapping/non-bool raises
+  `ValueError` rather than silently drawing nothing. `zorder=2.5` is set by
+  `global_map` itself (not configurable) so the outline always sits above
+  the `pcolormesh`.
+- Coastlines are a cartopy-only feature, so `ocn.map_2d` prints an
+  "ignoring `coastlines`" note when a variable falls back to `index_map`
+  for lack of real coordinates, instead of failing.
+- Natural Earth shapefiles are fetched by cartopy on first use and cached
+  under `~/.local/share/cartopy`; all three resolutions were already
+  present on this machine, so enabling the toggle needs no network here.
+
+The same day, a **`central_longitude` option** was added for `map_2d`
+(`plot_utils.resolve_central_longitude`), sharing the resolution order above
+via `plot_utils._resolve_map_option`. It's passed to the existing
+`get_projection` factory as a `PlateCarree` kwarg, so only the projection is
+recentered — the data is untouched and cartopy wraps the cells straddling
+the new map edge. Set to `200` in `config/real_topo-reglatlon.yaml` (keeps
+the Pacific whole). Like `coastlines` it's cartopy-only, so `ocn.map_2d`
+lists it in the same "ignoring ..." note when a variable falls back to
+`index_map`.
+
 ## Pending / open items
 
 - Ocean land-cell masking (see above) — not implemented, flag to user first.

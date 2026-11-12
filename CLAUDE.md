@@ -17,7 +17,7 @@ You can only modify files within this project.
 
 ## Project Guidelines
 
-- Required libraries: `xarray`, `numpy`, `matplotlib`, `cartopy`.
+- Required libraries: `xarray`, `numpy`, `matplotlib`, `cartopy`, `cmocean`.
 
 - **Conventions:**
   - Use `xarray` for all NetCDF data handling.
