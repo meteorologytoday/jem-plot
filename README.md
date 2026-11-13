@@ -70,6 +70,22 @@ Notes on grids:
 
 ## Usage
 
+Plot a new case straight from its run directory, with no config file of its
+own. The plot config defaults to `config/plot/default.yaml`, the experiment
+is named after the directory (`my_case` here), and `--time` sets the window
+that maps, sections and profiles average over (time series always cover the
+whole run):
+
+```sh
+python plot_jem.py run --run-dir data/my_case --time 4950:5000
+```
+
+Without `--time` the plot config's own window applies, which for
+`default.yaml` is `mean` over every record: correct, but it opens every
+file, which is slow for a long run. Map options that depend on the run
+(`coastlines`, `central_longitude`) also come from the plot config; once a
+case needs those, give it a simulation config (below).
+
 Generate every figure the plot config describes, for one simulation:
 
 ```sh

@@ -4,6 +4,8 @@ plot_jem.py — config-driven diagnostic plotting for jax-esm (jem) output.
 
 Usage
 -----
+    python plot_jem.py run --run-dir data/my_case --time 4950:5000
+
     python plot_jem.py run --sim config/sim/long_run.yaml \\
         --plot config/plot/default.yaml --components atm ocn --diag-types map_2d
 
@@ -17,7 +19,7 @@ import copy
 import sys
 from pathlib import Path
 
-from jemdiag import data_loader
+from jemdiag import data_loader, selection
 from jemdiag.config import load_config
 from jemdiag.diagnostics import atm, lnd, ocn, seaice
 
@@ -29,6 +31,10 @@ COMPONENT_MODULES = {
     "seaice": seaice,
 }
 
+# Plot config used when --plot is not given. Resolved against this file, not
+# the working directory, so the script runs from anywhere.
+DEFAULT_PLOT_CONFIG = Path(__file__).resolve().parent / "config" / "plot" / "default.yaml"
+
 ALL_DIAG_TYPES = [
     "map_2d", "zonal_section", "profile", "timeseries", "zonal_mean",
     "overturning_streamfunction", "heat_transport",
@@ -37,20 +43,22 @@ ALL_DIAG_TYPES = [
 
 def _add_run_subparser(subparsers):
     p = subparsers.add_parser(
-        "run", help="Generate figures from a simulation config and a plot config"
+        "run", help="Generate figures for one run (a simulation config or a run directory)"
     )
     p.add_argument(
-        "--sim", required=True, type=Path, metavar="PATH",
+        "--sim", type=Path, default=None, metavar="PATH",
         help=(
             "Simulation YAML config: `experiment`/`data`, plus optional "
-            "run-specific `diagnostics` overrides (e.g. config/sim/long_run.yaml)."
+            "run-specific `diagnostics` overrides (e.g. config/sim/long_run.yaml). "
+            "Optional: without it, --run-dir is required and the experiment "
+            "is named after the run directory."
         ),
     )
     p.add_argument(
-        "--plot", required=True, type=Path, metavar="PATH",
+        "--plot", type=Path, default=DEFAULT_PLOT_CONFIG, metavar="PATH",
         help=(
-            "Plot YAML config: `grids`/`diagnostics`/`output` "
-            "(e.g. config/plot/default.yaml)."
+            "Plot YAML config: `grids`/`diagnostics`/`output`. "
+            "Default: config/plot/default.yaml."
         ),
     )
     p.add_argument(
@@ -68,11 +76,25 @@ def _add_run_subparser(subparsers):
     )
     p.add_argument(
         "--run-dir", type=Path, default=None, metavar="DIR",
-        help="Override data.run_dir from the simulation config.",
+        help=(
+            "Run output directory. Overrides data.run_dir when --sim is "
+            "given; required when it isn't."
+        ),
     )
     p.add_argument(
         "--exp-name", default=None, metavar="NAME",
-        help="Override experiment.name from the simulation config (used in output paths).",
+        help=(
+            "Override experiment.name (used in output paths). Default: from "
+            "--sim, else the run directory's name."
+        ),
+    )
+    p.add_argument(
+        "--time", type=_time_spec, default=None, metavar="SPEC",
+        help=(
+            "Override the shared diagnostics.time window: mean, a record "
+            "index, or start:end (end exclusive), e.g. 4950:5000. A diag_type "
+            "block's own `time` still takes precedence."
+        ),
     )
     p.add_argument(
         "--output-dir", type=Path, default=None, metavar="DIR",
@@ -100,6 +122,9 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # A new case with the default plot config, no config file needed
+  python plot_jem.py run --run-dir data/my_case --time 4950:5000
+
   # Everything the plot config describes, for one simulation
   python plot_jem.py run --sim config/sim/long_run.yaml \\
       --plot config/plot/default.yaml
@@ -149,13 +174,35 @@ def cmd_list_vars(args) -> int:
     return 0
 
 
+def _time_spec(text: str):
+    """argparse type for --time: validate now, keep the YAML value types.
+
+    An integer becomes an ``int`` (as YAML would load it); ``mean`` and
+    ``start:end`` stay strings. Anything else is rejected before data is
+    loaded.
+    """
+    try:
+        parsed = selection.parse_index_or_mean(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid time spec {text!r}: expected mean, an integer, or start:end"
+        ) from None
+    return parsed if isinstance(parsed, int) else text
+
+
 def cmd_run(args) -> int:
-    config = load_config(args.sim, args.plot)
+    if args.sim is None and args.run_dir is None:
+        print("Error: give --sim, or --run-dir to plot a run directory directly",
+              file=sys.stderr)
+        return 1
+    config = load_config(args.sim, args.plot, run_dir=args.run_dir)
 
     if args.run_dir is not None:
         config["data"]["run_dir"] = str(args.run_dir)
     if args.exp_name is not None:
         config["experiment"]["name"] = args.exp_name
+    if args.time is not None:
+        config["diagnostics"]["time"] = args.time
 
     output_root = args.output_dir or Path(config["output"]["base_dir"])
     exp_name = config["experiment"]["name"]

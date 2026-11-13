@@ -18,6 +18,11 @@ module needs to know there are two files. The simulation's ``diagnostics``
 overrides are deep-merged over the plot config's: mappings merge key by
 key, while any other value (scalar or list) replaces the plot config's
 value wholesale -- a list is never concatenated.
+
+The simulation config is optional: :func:`load_config` given only a run
+directory builds the minimal one (see :func:`sim_config_from_run_dir`), so
+a new case can be plotted with the plot config's defaults and no file of
+its own.
 """
 
 import copy
@@ -88,17 +93,45 @@ def deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
-def load_config(sim_path, plot_path) -> dict:
+def sim_config_from_run_dir(run_dir) -> dict:
+    """Build the minimal simulation config for a run directory.
+
+    ``experiment.name`` is the directory's own name (resolved first, so
+    ``.`` or a trailing slash still give a real name) and there are no
+    ``diagnostics`` overrides: the plot config's defaults apply as-is.
+    Raises ``FileNotFoundError`` if *run_dir* is not a directory.
+    """
+    run_dir = Path(run_dir)
+    if not run_dir.is_dir():
+        raise FileNotFoundError(f"Run directory not found: {run_dir}")
+    return {
+        "experiment": {"name": run_dir.resolve().name},
+        "data": {"run_dir": str(run_dir)},
+    }
+
+
+def load_config(sim_path, plot_path, run_dir=None) -> dict:
     """Load a simulation config and a plot config into one merged config.
 
     See this module's docstring for the schema of each file and the merge
-    rules. Raises ``FileNotFoundError`` for a missing file and
-    ``ValueError`` for a file that doesn't follow its schema.
+    rules. With *sim_path* ``None`` the simulation config is built from
+    *run_dir* by :func:`sim_config_from_run_dir`; otherwise *run_dir* is
+    ignored here (callers apply their own overrides). Raises
+    ``FileNotFoundError`` for a missing file or directory and
+    ``ValueError`` for a file that doesn't follow its schema, or when
+    neither *sim_path* nor *run_dir* is given.
     """
-    sim_path, plot_path = Path(sim_path), Path(plot_path)
-    sim = _read_yaml_mapping(sim_path, "Simulation")
+    plot_path = Path(plot_path)
+    if sim_path is None:
+        if run_dir is None:
+            raise ValueError("Either a simulation config or a run directory is required")
+        sim_path = "<run directory>"
+        sim = sim_config_from_run_dir(run_dir)
+    else:
+        sim_path = Path(sim_path)
+        sim = _read_yaml_mapping(sim_path, "Simulation")
+        _check_sections(sim, sim_path, "Simulation", SIM_REQUIRED_SECTIONS, SIM_OPTIONAL_SECTIONS)
     plot = _read_yaml_mapping(plot_path, "Plot")
-    _check_sections(sim, sim_path, "Simulation", SIM_REQUIRED_SECTIONS, SIM_OPTIONAL_SECTIONS)
     _check_sections(plot, plot_path, "Plot", PLOT_REQUIRED_SECTIONS, PLOT_OPTIONAL_SECTIONS)
 
     for section, key in (("experiment", "name"), ("data", "run_dir")):
