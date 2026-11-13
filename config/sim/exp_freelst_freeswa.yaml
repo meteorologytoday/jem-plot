@@ -1,0 +1,19 @@
+# Simulation config: *what* was run. Pair with a plot config from
+# config/plot/ (`plot_jem.py run --sim ... --plot ...`).
+experiment:
+  name: exp_freelst_freeswa
+  description: "JCM + Veros, realistic topography, free land surface temperature and soil water availability (1000 years)"
+
+data:
+  # Directory containing {component}-*.nc files (atm/ocn/lnd/seaice).
+  run_dir: data/exp_freelst_freeswa
+
+# Run-specific overrides, deep-merged over the plot config's `diagnostics`
+# (mappings merge key by key; scalars and lists replace).
+diagnostics:
+  # Last 10 years (5 records of 73 days per year).
+  time: "4950:5000"
+  # Configured with real Earth topography, so coastlines match the
+  # land-sea mask; centered on the Pacific.
+  coastlines: true
+  central_longitude: 200

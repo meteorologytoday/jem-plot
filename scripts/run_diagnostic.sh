@@ -9,7 +9,7 @@
 # Run 'scripts/run_diagnostic.sh <subcommand> --help' for subcommand options.
 #
 # Examples:
-#   scripts/run_diagnostic.sh run --config config/long_run.yaml
+#   scripts/run_diagnostic.sh run --sim config/sim/long_run.yaml --plot config/plot/default.yaml
 #   scripts/run_diagnostic.sh list-vars --run-dir data/long_run --component atm
 #
 set -euo pipefail

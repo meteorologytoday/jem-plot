@@ -1,32 +1,54 @@
 # diagnostic-package-for-jem
 
 Config-driven diagnostic plotting for output produced by `jax-esm` (jem),
-modeled on the `plotting_poem` package: one YAML config describes an
-experiment's data path, grids, and which variables to plot for each
-component/diagnostic-type, and a single command produces the whole figure
-set.
+modeled on the `plotting_poem` package. Two YAML configs drive a run: a
+*simulation* config says what was run (experiment name, data path), and a
+*plot* config says what to plot (grids, which variables per
+component/diagnostic-type, output). A single command produces the whole
+figure set, and one plot config can be reused across runs.
 
 ## Layout
 
 ```
 jemdiag/                  # reusable plotting library
+├── config.py              # load + merge the simulation and plot configs
 ├── data_loader.py         # discover/load a component's *.nc files into one xr.Dataset
-├── grid.py                # dimension/coordinate detection (atm/ocn/fakelnd), real vs. synthetic coords
+├── grid.py                # dimension/coordinate detection (atm/ocn/lnd/seaice), real vs. synthetic coords
 ├── compute.py              # area-weighted reductions (numpy)
 ├── selection.py             # time/level/region selection & reduction
 ├── plot_utils.py             # cartopy-based plot functions (map, zonal_section, profile, time_series)
-└── diagnostics/               # one module per component (atm, ocn, fakelnd), HANDLERS registry + run()
+└── diagnostics/               # one module per component (atm, ocn, lnd, seaice), HANDLERS registry + run();
+                               # lnd/seaice share surface.py
 config/
-└── long_run.yaml          # experiment config for data/long_run
+├── sim/                   # simulation configs: one per run (experiment, data, run-specific overrides)
+│   ├── exp_freelst_freeswa.yaml
+│   └── ...
+└── plot/                  # plot configs: grids, diagnostics, output
+    └── default.yaml
 plot_jem.py                # CLI entry point (`run` and `list-vars` subcommands)
 scripts/
 └── run_diagnostic.sh       # bash wrapper around plot_jem.py
 requirements.txt           # numpy, xarray, netCDF4, matplotlib, cartopy, pyyaml
 ```
 
-A run directory contains numbered NetCDF files per component, e.g.
-`atm-00000.nc`, `ocn-00000.nc`, `fakelnd-00000.nc`, .... `data_loader`
-concatenates these along `time` automatically.
+A run directory contains numbered NetCDF files per component (`atm`,
+`ocn`, `lnd`, `seaice`), e.g. `atm-00000000.nc`, `atm-00000073.nc`, ...,
+plus the driver's `run_args.json`. `data_loader` concatenates each
+component's files along `time` automatically, opening only the components
+being plotted and, where the config's `time` specs allow, only the files
+they cover.
+
+Time handling:
+- `time` is always the record's index in the run (0, 1, 2, ...), whatever
+  jem wrote there — older runs wrote one meaningless value per file, newer
+  ones write real dates that overflow numpy's datetime range past year
+  2262. Every config `time` spec (`"4950:5000"`, ...) is a record index.
+- When the run directory has a `run_args.json` with
+  `simulation_interval_days` and the file names carry start days
+  (`ocn-00000073.nc` starts on day 73), each record also gets a
+  `model_year` coordinate (chunk midpoint, 365-day years), which time
+  series use for their x-axis. With 73-day chunks, 5 records = 1 year:
+  the last 10 years of a 5000-record run are `time: "4950:5000"`.
 
 Notes on grids:
 - `atm` has real `lon`/`lat`/`level` coordinates — maps use a cartopy
@@ -41,35 +63,34 @@ Notes on grids:
   the surface (last index, thinnest layers) — `zonal_section` and
   `overturning_streamfunction` default to `invert_yaxis: false` so the
   surface is drawn at the top of the chart.
-- `fakelnd` has real `time` plus 2D curvilinear `longitude2D`/`latitude2D`;
-  maps use cartopy the same way as `atm`.
-- If a run's `time` coordinate is missing or degenerate (e.g. one
-  non-informative value per file, as in `data/long_run`), it is replaced
-  with a synthetic record index (0, 1, 2, ...).
+- `lnd` and `seaice` share the `atm` horizontal grid; maps use cartopy
+  the same way. `lnd`'s soil-water variables have a soil `layer` dim,
+  reduced by the diag_type's `level` setting like any vertical dim. Both
+  support `map_2d` and `timeseries`.
 
 ## Usage
 
-Generate every figure the config describes:
+Generate every figure the plot config describes, for one simulation:
 
 ```sh
-python plot_jem.py run --config config/long_run.yaml
+python plot_jem.py run --sim config/sim/long_run.yaml --plot config/plot/default.yaml
 ```
 
 Restrict to specific components / diagnostic types (fast dev iteration):
 
 ```sh
-python plot_jem.py run --config config/long_run.yaml \
+python plot_jem.py run --sim config/sim/long_run.yaml --plot config/plot/default.yaml \
     --components atm ocn --diag-types map_2d
 
-python plot_jem.py run --config config/long_run.yaml \
+python plot_jem.py run --sim config/sim/long_run.yaml --plot config/plot/default.yaml \
     --components atm --diag-types map_2d --vars temperature
 ```
 
 Point at a different run directory / experiment name without editing the
-config file:
+simulation config:
 
 ```sh
-python plot_jem.py run --config config/long_run.yaml \
+python plot_jem.py run --sim config/sim/long_run.yaml --plot config/plot/default.yaml \
     --run-dir /path/to/other/run --exp-name my_run
 ```
 
@@ -88,10 +109,26 @@ resolves to more than one spec (see below), each one gets its own file with a
 
 ## Config file schema
 
-See `config/long_run.yaml` for a complete example. Top-level sections:
+A run is described by two files, merged by `jemdiag/config.py`. Each file
+may only contain its own sections; anything else is an error, so a
+simulation detail can't slip into a plot config (or vice versa) unnoticed.
 
-- `experiment.name` — used in output paths.
-- `data.run_dir` — directory containing `{component}-*.nc` files.
+**Simulation config** (`config/sim/*.yaml`, see `config/sim/long_run.yaml`):
+
+- `experiment.name` (required) — used in output paths.
+- `experiment.description` (optional) — free text, for humans.
+- `data.run_dir` (required) — directory containing `{component}-*.nc` files.
+- `diagnostics` (optional) — run-specific overrides, deep-merged over the
+  plot config's `diagnostics`: mappings merge key by key, while scalars and
+  lists replace the plot config's value outright (lists are never
+  concatenated). Typical uses: the analysis `time` window (depends on run
+  length), and `coastlines`/`central_longitude` for a run with real Earth
+  topography. An override may also add a block the plot config doesn't
+  have, which enables that diag_type for this run only.
+
+**Plot config** (`config/plot/*.yaml`, see `config/plot/default.yaml`) —
+the sections below, except `experiment`/`data`:
+
 - `grids.<component>.projection` — cartopy projection name (currently only
   `PlateCarree` is implemented); horizontal/vertical dimension names and
   real-vs-synthetic coordinates are auto-detected per variable, so `ocn`

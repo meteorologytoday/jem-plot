@@ -1,0 +1,17 @@
+# Simulation config: *what* was run. Pair with a plot config from
+# config/plot/ (`plot_jem.py run --sim ... --plot ...`).
+experiment:
+  name: real_topo-reglatlon
+
+data:
+  # Directory containing {component}-*.nc files (atm/ocn/lnd/seaice).
+  run_dir: data/real_topo-reglatlon
+
+# Run-specific overrides, deep-merged over the plot config's `diagnostics`
+# (mappings merge key by key; scalars and lists replace).
+diagnostics:
+  time: 777:876
+  # Configured with real Earth topography, so coastlines match the
+  # land-sea mask; centered on the Pacific.
+  coastlines: true
+  central_longitude: 200

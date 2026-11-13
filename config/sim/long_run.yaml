@@ -1,0 +1,14 @@
+# Simulation config: *what* was run. Pair with a plot config from
+# config/plot/ (`plot_jem.py run --sim ... --plot ...`).
+experiment:
+  name: long_run
+  description: "Long, low-frequency-output jem run (one snapshot per file, no real time coordinate)"
+
+data:
+  # Directory containing {component}-*.nc files (atm/ocn/lnd/seaice).
+  run_dir: data/long_run
+
+# Run-specific overrides, deep-merged over the plot config's `diagnostics`
+# (mappings merge key by key; scalars and lists replace).
+diagnostics:
+  time: 481:500

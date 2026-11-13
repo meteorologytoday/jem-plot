@@ -4,12 +4,12 @@ plot_jem.py — config-driven diagnostic plotting for jax-esm (jem) output.
 
 Usage
 -----
-    python plot_jem.py run --config config/long_run.yaml \\
-        --components atm ocn --diag-types map_2d
+    python plot_jem.py run --sim config/sim/long_run.yaml \\
+        --plot config/plot/default.yaml --components atm ocn --diag-types map_2d
 
     python plot_jem.py list-vars --run-dir data/long_run --component atm
 
-See the README for the config file schema and more examples.
+See the README for the config file schemas and more examples.
 """
 
 import argparse
@@ -17,9 +17,8 @@ import copy
 import sys
 from pathlib import Path
 
-import yaml
-
 from jemdiag import data_loader
+from jemdiag.config import load_config
 from jemdiag.diagnostics import atm, lnd, ocn, seaice
 
 # Registry: component name -> module with a HANDLERS dict and run() function.
@@ -37,10 +36,22 @@ ALL_DIAG_TYPES = [
 
 
 def _add_run_subparser(subparsers):
-    p = subparsers.add_parser("run", help="Generate figures from a YAML config")
+    p = subparsers.add_parser(
+        "run", help="Generate figures from a simulation config and a plot config"
+    )
     p.add_argument(
-        "--config", required=True, type=Path, metavar="PATH",
-        help="Path to the experiment YAML config file.",
+        "--sim", required=True, type=Path, metavar="PATH",
+        help=(
+            "Simulation YAML config: `experiment`/`data`, plus optional "
+            "run-specific `diagnostics` overrides (e.g. config/sim/long_run.yaml)."
+        ),
+    )
+    p.add_argument(
+        "--plot", required=True, type=Path, metavar="PATH",
+        help=(
+            "Plot YAML config: `grids`/`diagnostics`/`output` "
+            "(e.g. config/plot/default.yaml)."
+        ),
     )
     p.add_argument(
         "--components", nargs="+", default=list(COMPONENT_MODULES),
@@ -57,15 +68,15 @@ def _add_run_subparser(subparsers):
     )
     p.add_argument(
         "--run-dir", type=Path, default=None, metavar="DIR",
-        help="Override data.run_dir from the config.",
+        help="Override data.run_dir from the simulation config.",
     )
     p.add_argument(
         "--exp-name", default=None, metavar="NAME",
-        help="Override experiment.name from the config (used in output paths and titles).",
+        help="Override experiment.name from the simulation config (used in output paths).",
     )
     p.add_argument(
         "--output-dir", type=Path, default=None, metavar="DIR",
-        help="Override the output base directory from the config.",
+        help="Override output.base_dir from the plot config.",
     )
     p.add_argument(
         "--vars", nargs="+", default=None, metavar="VAR",
@@ -89,20 +100,23 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Everything the config describes
-  python plot_jem.py run --config config/long_run.yaml
+  # Everything the plot config describes, for one simulation
+  python plot_jem.py run --sim config/sim/long_run.yaml \\
+      --plot config/plot/default.yaml
 
   # Only atm maps, for fast iteration
-  python plot_jem.py run --config config/long_run.yaml \\
-      --components atm --diag-types map_2d
+  python plot_jem.py run --sim config/sim/long_run.yaml \\
+      --plot config/plot/default.yaml --components atm --diag-types map_2d
 
   # Single variable during development
-  python plot_jem.py run --config config/long_run.yaml \\
-      --components atm --diag-types map_2d --vars temperature
+  python plot_jem.py run --sim config/sim/long_run.yaml \\
+      --plot config/plot/default.yaml --components atm --diag-types map_2d \\
+      --vars temperature
 
-  # Point at a different run directory without a separate config file
-  python plot_jem.py run --config config/long_run.yaml \\
-      --run-dir /path/to/other/run --exp-name my_run
+  # Point at a different run directory without a separate simulation config
+  python plot_jem.py run --sim config/sim/long_run.yaml \\
+      --plot config/plot/default.yaml --run-dir /path/to/other/run \\
+      --exp-name my_run
 
   python plot_jem.py list-vars --run-dir data/long_run --component atm
 """,
@@ -136,12 +150,7 @@ def cmd_list_vars(args) -> int:
 
 
 def cmd_run(args) -> int:
-    if not args.config.exists():
-        print(f"Error: config file not found: {args.config}", file=sys.stderr)
-        return 1
-
-    with args.config.open() as fh:
-        config = yaml.safe_load(fh)
+    config = load_config(args.sim, args.plot)
 
     if args.run_dir is not None:
         config["data"]["run_dir"] = str(args.run_dir)

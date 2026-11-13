@@ -1,11 +1,9 @@
-experiment:
-  name: long_run
-  description: "Long, low-frequency-output jem run (one snapshot per file, no real time coordinate)"
-
-# ── Data paths ───────────────────────────────────────────────────────────────
-data:
-  # Directory containing {component}-*.nc files (atm/ocn/fakelnd).
-  run_dir: data/long_run
+# Plot config: *how* to plot a jem run -- grids, diagnostics and output.
+# Shared across simulations; pair it with a simulation config from
+# config/sim/ (`plot_jem.py run --sim ... --plot ...`). Anything that is
+# specific to one run (its analysis `time` window, `coastlines` for a
+# real-topography run, ...) belongs in that run's simulation config as a
+# `diagnostics` override, which is deep-merged over this file.
 
 # ── Grid metadata ─────────────────────────────────────────────────────────────
 # Only the cartopy projection needs to be configured here — horizontal/
@@ -14,7 +12,9 @@ data:
 grids:
   atm:
     projection: PlateCarree
-  fakelnd:
+  lnd:
+    projection: PlateCarree
+  seaice:
     projection: PlateCarree
   # ocn is intentionally omitted: map_2d picks cartopy or a plain index-based
   # fallback automatically depending on whether its coordinates are real.
@@ -30,7 +30,9 @@ diagnostics:
   # zonal_section, profile, overturning_streamfunction, heat_transport).
   # timeseries plots the full time axis and ignores this. Any diag_type
   # block may still set its own `time` to opt out of the shared default.
-  time: 481:500
+  # The useful window depends on the run's length, so simulation configs
+  # normally override this.
+  time: mean
 
   # Draw Earth coastlines on every map_2d figure. Only meaningful for runs
   # configured with real Earth topography — an idealized/aqua-planet run
@@ -56,11 +58,13 @@ diagnostics:
       #   temperature: {vmin: 200, vmax: 300}
       #   u_wind: {symmetric: true}
     zonal_section:
-      invert_yaxis: false
+      # sigma levels: the code default (true) puts the surface at the bottom.
+      invert_yaxis: true
       vars: [temperature, u_wind]
     profile:
       vars: [specific_humidity, temperature]
     timeseries:
+      running_mean_steps: 5  # 5 x 73-day records = 1 year
       level: mean
       vars: [surface_flux.tsfc, shortwave_rad.rsds]
     zonal_mean:
@@ -78,6 +82,7 @@ diagnostics:
       invert_yaxis: false
       vars: [temp, salt]
     timeseries:
+      running_mean_steps: 5  # 5 x 73-day records = 1 year
       level: mean
       vars: [sea_surface_temperature]
     zonal_mean:
@@ -89,16 +94,23 @@ diagnostics:
         - [0, 60]
         - [60, 360]
     heat_transport:
-       lon_bands: 
-          - [0, 360]
-          - [0, 60]
-          - [60, 360]
+      lon_bands:
+        - [0, 360]
+        - [0, 60]
+        - [60, 360]
 
-  fakelnd:
+  lnd:
     map_2d:
-      vars: [mixed_layer_depth]
+      # `level` reduces the soil `layer` dim of soil-water variables.
+      level: mean
+      vars: [land_surface_temperature, soil_water_availability, snow_depth]
     timeseries:
-      vars: [mixed_layer_depth, total_heat_flux]
+      running_mean_steps: 5  # 5 x 73-day records = 1 year
+      vars: [land_surface_temperature, soil_water_availability]
+
+  seaice:
+    map_2d:
+      vars: [ice_fraction, ice_thickness]
 
 # ── Output ────────────────────────────────────────────────────────────────────
 output:

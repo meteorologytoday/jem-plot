@@ -127,10 +127,11 @@ it's built the way it is. Not user-facing docs — see `README.md` for usage.
 ```sh
 cd jem_diag
 python plot_jem.py list-vars --run-dir data/long_run --component atm
-python plot_jem.py run --config config/long_run.yaml
+python plot_jem.py run --sim config/sim/long_run.yaml --plot config/plot/default.yaml
 ```
 
-The full `run --config config/long_run.yaml` pass (all 3 components, all 4
+(Before 2026-11-12 the CLI took a single `--config config/long_run.yaml`;
+see the config split note below.) The full `run --config config/long_run.yaml` pass (all 3 components, all 4
 original diag_types) was verified against `data/long_run`, and a sample of the
 resulting PNGs was visually inspected: `atm`/`ocn` maps render on the correct
 cartopy projection (no coastlines, per user request), `ocn`'s zonal/map
@@ -222,9 +223,57 @@ the Pacific whole). Like `coastlines` it's cartopy-only, so `ocn.map_2d`
 lists it in the same "ignoring ..." note when a variable falls back to
 `index_map`.
 
+On 2026-11-12, the single per-run config was **split into a simulation
+config and a plot config** (`config/sim/*.yaml` + `config/plot/*.yaml`,
+CLI `run --sim ... --plot ...`, merged by `jemdiag/config.py`). The four
+per-run configs had been identical apart from `experiment`/`data`, the
+`diagnostics.time` window, `coastlines`/`central_longitude` (real-topography
+runs) and one `vars` list, so the shared part became
+`config/plot/default.yaml` (moved from `config/long_run.yaml`) and each run
+keeps only those differences as `diagnostics` overrides in its sim config.
+The merge happens once at load time and produces the same dict layout as
+before, so nothing downstream changed; each merged config was checked to
+be identical to the single file it replaced. Decisions:
+- Sim files may override `diagnostics` only (not `grids`/`output`), and
+  both files reject sections outside their schema rather than ignoring
+  them.
+- Deep merge replaces lists instead of concatenating them, so an override
+  like `ocn.timeseries.vars` means exactly the list written.
+- The copy-pasted `long_run` description in the hosing/real_topo configs
+  was dropped rather than carried over, since it described a different run.
+
+On 2026-11-12 (later the same day), **support for the current jem output
+format** (`data/exp_freelst_freeswa*`, 73-day chunks, up to 5000 files per
+component):
+- `time` is now *always* the record index; files are opened with
+  `decode_times=False`. The new output writes real dates, which overflow
+  `datetime64` past year 2262 so xarray switched to cftime partway through
+  a 1000-year run and the partial-load offset (`time + start`) crashed
+  with a cftime/int `TypeError`. Every config `time` spec was already a
+  record index, so nothing user-facing changed meaning.
+- `model_year` coordinate (chunk midpoint, 365-day years) from the start
+  day in each file name and `run_args.json`'s `simulation_interval_days`.
+  Deliberately not guessed when either is missing: old runs number files
+  by record, indistinguishable from day numbers by the name alone.
+- `fakelnd` dropped (no longer produced); `lnd` and `seaice` added. Both
+  use `diagnostics/surface.py` (moved from `fakelnd.py`) through a
+  `make_component` factory, so they can't drift apart. `layer` (lnd soil
+  layers) joined `grid.VERTICAL_DIMS`.
+- `load_all(components=...)`: the CLI's `--components` now also limits
+  what's *loaded*, not only what's plotted. A full-run `lnd` timeseries on
+  the 2500-file dev1.0 run went from 5m33s to 54s.
+- `plot_utils._rolling_mean` no longer edge-pads: repeating the
+  first/last (single-season) value biased the annual running mean at both
+  ends of every series. Edges are now NaN, like the old
+  `diagnostics/*_timeseries.py` scripts' `t[2:-2]`.
+
 ## Pending / open items
 
 - Ocean land-cell masking (see above) — not implemented, flag to user first.
+- `lnd`/`seaice` fields hold 0 (not NaN) outside their own domain (ocean
+  for `lnd`, land for `seaice`), which washes out map contrast and enters
+  domain means. Needs a land/ocean mask from another component (`ocn`'s
+  `mask_surface_T`), i.e. cross-component data in the handlers.
 - Only `PlateCarree` is implemented in `jemdiag/plot_utils.get_projection`-
   equivalent path (there isn't a projection factory yet since only one
   projection is needed today); add one if a polar or regional projection is
