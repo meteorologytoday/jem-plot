@@ -3,15 +3,20 @@ Shared plotting utilities for jem diagnostic figures.
 
 Horizontal maps are produced with cartopy (for a correct geographic
 projection) whenever the underlying grid has real coordinates (``atm``,
-``fakelnd``). Earth coastlines are off by default (jem runs are idealized
+``lnd``, ``seaice``). Earth coastlines are off by default (jem runs are idealized
 unless configured with real topography) and opt-in per experiment via the
 config ``coastlines`` toggle (see :func:`resolve_coastlines`). ``ocn``
 currently has no coordinate values at all (see :mod:`jemdiag.data_loader`),
 so its maps fall back to :func:`index_map`, a plain (non-georeferenced)
-``pcolormesh`` — once a future jem version adds real ocean coordinates,
+filled-contour plot — once a future jem version adds real ocean coordinates,
 :mod:`jemdiag.diagnostics.ocn` will pick :func:`global_map` automatically
 (see :func:`jemdiag.grid.has_real_horizontal_coords`), with no config change
 required.
+
+Every 2D field is drawn as filled contours (:func:`_filled_contours`), not
+as a cell-by-cell mesh. Values outside the colour limits are filled with
+the colormap's end colours (``extend="both"``, shown as arrow ends on the
+colorbar) rather than left blank.
 
 Diagnostic modules should call these helpers rather than constructing
 figures directly so that style changes propagate everywhere at once.
@@ -23,8 +28,8 @@ import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend for headless / SSH sessions
 import cartopy.crs as ccrs
+from cartopy.util import add_cyclic_point
 import cmocean  # noqa: F401 -- registers the "cmo.*" colormaps with matplotlib on import
-import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
@@ -186,8 +191,9 @@ def global_map(
     Save a global map of *data* on a cartopy projection.
 
     *lon*/*lat* may be 1D (regular grid, e.g. ``atm``) or 2D curvilinear
-    (e.g. ``fakelnd``'s ``longitude2D``/``latitude2D``) — ``pcolormesh``
-    accepts either.
+    (``longitude2D``/``latitude2D``-style). For a 1D global longitude axis
+    a cyclic column is appended so the contours close across the 0/360
+    seam instead of leaving a gap there.
 
     *central_longitude* (degrees east) recenters the projection; the data
     itself is unchanged, cartopy wraps the cells that straddle the resulting
@@ -196,25 +202,24 @@ def global_map(
     *coastlines* are ``ax.coastlines()`` kwargs from
     :func:`resolve_coastlines`, or ``None`` (the default) to draw none.
     """
-    values = np.asarray(data)
+    values = np.asarray(data, dtype=float)
     cmap = cmap or DEFAULT_CMAPS.get(str(data.name), "viridis")
     vmin, vmax = _resolve_clim(values, vmin, vmax, symmetric)
-    norm = _make_norm(cmap, vmin, vmax, n_levels)
+    lon = np.asarray(lon)
+    if lon.ndim == 1 and _is_global_lon(lon):
+        values, lon = add_cyclic_point(values, coord=lon, axis=-1)
 
     proj = get_projection(projection, central_longitude=central_longitude)
     fig, ax = plt.subplots(figsize=(10, 5), subplot_kw={"projection": proj})
     ax.set_global()
 
-    mesh = ax.pcolormesh(
-        lon, lat, values,
+    mesh = _filled_contours(
+        ax, lon, lat, values, cmap, vmin, vmax, n_levels,
         transform=ccrs.PlateCarree(),
-        cmap=cmap,
-        norm=norm,
-        shading="auto",
     )
     if coastlines:
-        # Explicit zorder keeps the outline above the mesh (zorder 1) rather
-        # than relying on cartopy's default feature ordering.
+        # Explicit zorder keeps the outline above the filled contours
+        # (zorder 1) rather than relying on cartopy's default ordering.
         ax.coastlines(zorder=2.5, **coastlines)
     gl = ax.gridlines(
         crs=ccrs.PlateCarree(), draw_labels=True,
@@ -249,13 +254,12 @@ def index_map(
     Used for grids without real coordinate values (currently ``ocn`` — see
     module docstring).
     """
-    values = np.asarray(data)
+    values = np.asarray(data, dtype=float)
     cmap = cmap or DEFAULT_CMAPS.get(str(data.name), "viridis")
     vmin, vmax = _resolve_clim(values, vmin, vmax, symmetric)
-    norm = _make_norm(cmap, vmin, vmax, n_levels)
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    mesh = ax.pcolormesh(x, y, values, cmap=cmap, norm=norm, shading="auto")
+    mesh = _filled_contours(ax, x, y, values, cmap, vmin, vmax, n_levels)
     _add_colorbar(fig, ax, mesh, units)
     ax.set_xlabel(f"{x_label} (index)")
     ax.set_ylabel(f"{y_label} (index)")
@@ -285,13 +289,12 @@ def zonal_section(
 
     *data* is expected to have dimensions ``(z, y)`` (vertical, meridional).
     """
-    values = np.asarray(data)
+    values = np.asarray(data, dtype=float)
     cmap = cmap or DEFAULT_CMAPS.get(str(data.name), "viridis")
     vmin, vmax = _resolve_clim(values, vmin, vmax, symmetric)
-    norm = _make_norm(cmap, vmin, vmax, n_levels)
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    mesh = ax.pcolormesh(y, z, values, cmap=cmap, norm=norm, shading="auto")
+    mesh = _filled_contours(ax, y, z, values, cmap, vmin, vmax, n_levels)
     if invert_yaxis:
         ax.invert_yaxis()
     ax.set_xlabel(y_label)
@@ -323,15 +326,13 @@ def overturning_streamfunction(
     *psi* is expected to have dimensions ``(z, y)`` (vertical, meridional),
     diverging around zero (positive/negative circulation cells).
     """
-    values = np.asarray(psi)
+    values = np.asarray(psi, dtype=float)
     vmin, vmax = _resolve_clim(values, vmin, vmax, symmetric=True)
     cmap = "RdBu_r"
-    norm = _make_norm(cmap, vmin, vmax, n_levels)
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    mesh = ax.pcolormesh(y, z, values, cmap=cmap, norm=norm, shading="auto")
-    levels = np.linspace(vmin, vmax, n_levels + 1)
-    ax.contour(y, z, values, levels=levels, colors="k", linewidths=0.4, alpha=0.6)
+    mesh = _filled_contours(ax, y, z, values, cmap, vmin, vmax, n_levels)
+    ax.contour(y, z, values, levels=mesh.levels, colors="k", linewidths=0.4, alpha=0.6)
     ax.contour(y, z, values, levels=[0.0], colors="k", linewidths=1.2)
     if invert_yaxis:
         ax.invert_yaxis()
@@ -464,9 +465,30 @@ def time_series(
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-def _make_norm(cmap: str, vmin: float, vmax: float, n_levels: int) -> mcolors.BoundaryNorm:
-    bounds = np.linspace(float(vmin), float(vmax), int(n_levels) + 1)
-    return mcolors.BoundaryNorm(bounds, ncolors=plt.get_cmap(cmap).N)
+def _filled_contours(ax, x, y, values, cmap: str, vmin: float, vmax: float, n_levels: int, **kwargs):
+    """Draw *values* as filled contours on *ax* and return the ContourSet.
+
+    ``n_levels`` evenly spaced intervals span ``[vmin, vmax]``. Values
+    outside that range are filled with the colormap's end colours
+    (``extend="both"``) instead of being left blank -- the default colour
+    limits are the 2nd/98th percentiles, so some always fall outside. NaN
+    cells (e.g. masked land) stay blank. Extra *kwargs* (e.g. cartopy's
+    ``transform``) go to ``contourf``.
+    """
+    levels = np.linspace(float(vmin), float(vmax), int(n_levels) + 1)
+    return ax.contourf(x, y, values, levels=levels, cmap=cmap, extend="both", **kwargs)
+
+
+def _is_global_lon(lon: np.ndarray) -> bool:
+    """True if a regular 1D longitude axis spans the full 360 degrees.
+
+    Such an axis has one step left between its last and first point once
+    wrapped, so appending a cyclic point closes the globe.
+    """
+    if lon.size < 2:
+        return False
+    step = np.diff(lon)
+    return bool(np.allclose(step, step[0]) and np.isclose(lon[-1] - lon[0] + step[0], 360.0))
 
 
 def _rolling_mean(values: np.ndarray, window: int) -> np.ndarray:
@@ -492,8 +514,8 @@ def _rolling_mean(values: np.ndarray, window: int) -> np.ndarray:
 def _clean_number(value: float, _pos=None) -> str:
     """Format a tick value as an integer when it's whole, else ``%.1f``.
 
-    Colorbar tick values come from :func:`_make_norm`'s evenly-spaced
-    ``BoundaryNorm`` levels, which are rarely round numbers (e.g.
+    Colorbar tick values come from :func:`_filled_contours`'s evenly-spaced
+    levels, which are rarely round numbers (e.g.
     ``18.37...``) even when the data range itself is -- this keeps labels
     readable instead of matplotlib's default (often 4+ significant digits).
     """
