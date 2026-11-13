@@ -46,6 +46,12 @@ import numpy as np
 
 from jemdiag import compute, grid, plot_utils, selection
 
+# atm's vertical coordinate is sigma (p/ps), which increases toward the
+# surface (0 = model top, 1 = surface). Inverting the y-axis by default puts
+# the surface at the bottom of zonal sections and profiles, the usual
+# orientation; a config `invert_yaxis` still overrides it.
+DEFAULT_INVERT_YAXIS = True
+
 
 def run(diag_type: str, ds, config: dict, output_dir: Path) -> None:
     handler = HANDLERS.get(diag_type)
@@ -123,7 +129,7 @@ def _run_zonal_section(ds, config: dict, output_dir: Path) -> None:
     diag_cfg = config["diagnostics"]["atm"].get("zonal_section", {})
     out_cfg = config["output"]
     time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
-    invert_yaxis = diag_cfg.get("invert_yaxis", False)
+    invert_yaxis = diag_cfg.get("invert_yaxis", DEFAULT_INVERT_YAXIS)
     var_opts: dict = diag_cfg.get("var_opts", {})
 
     for varname in diag_cfg.get("vars", []):
@@ -176,6 +182,7 @@ def _run_profile(ds, config: dict, output_dir: Path) -> None:
     out_cfg = config["output"]
     time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
     region = diag_cfg.get("region")
+    invert_yaxis = diag_cfg.get("invert_yaxis", DEFAULT_INVERT_YAXIS)
 
     for varname in diag_cfg.get("vars", []):
         if varname not in ds:
@@ -206,6 +213,7 @@ def _run_profile(ds, config: dict, output_dir: Path) -> None:
                 output_path=out_path,
                 units=units,
                 dpi=out_cfg["dpi"],
+                invert_yaxis=invert_yaxis,
             )
             print(f"  [atm/profile] saved {out_path}")
 

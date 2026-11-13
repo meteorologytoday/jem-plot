@@ -371,10 +371,17 @@ def profile(
     output_path: str | Path,
     units: str = "",
     dpi: int = 150,
+    invert_yaxis: bool = False,
 ) -> None:
-    """Save a 1D vertical profile (value vs. level/depth)."""
+    """Save a 1D vertical profile (value vs. level/depth).
+
+    *invert_yaxis* flips the vertical axis, e.g. for sigma levels (which
+    increase toward the surface) so the surface is drawn at the bottom.
+    """
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.plot(np.asarray(data), z)
+    if invert_yaxis:
+        ax.invert_yaxis()
     ax.set_xlabel(units or str(data.name))
     ax.set_ylabel(z_label)
     ax.set_title(title, fontsize=11)
