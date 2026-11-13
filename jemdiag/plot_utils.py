@@ -55,9 +55,15 @@ DEFAULT_CMAPS: dict[str, str] = {
     "sea_surface_salinity": "PuBu",
     "heat_flux": "RdBu_r",
     "freshwater_flux": "BrBG",
-    # fakelnd
-    "mixed_layer_depth": "viridis",
-    "total_heat_flux": "RdBu_r",
+    # lnd
+    "land_surface_temperature": "cmo.thermal",
+    "soil_water_availability": "BrBG",
+    "soil_water_content": "BrBG",
+    "snow_depth": "Blues",
+    # seaice
+    "ice_fraction": "cmo.ice",
+    "ice_thickness": "cmo.ice",
+    "ice_volume": "cmo.ice",
 }
 
 
@@ -410,8 +416,9 @@ def time_series(
     output_path: str | Path,
     dpi: int = 150,
     running_mean_steps: int | None = None,
+    xlabel: str = "time",
 ) -> None:
-    """Save a line plot of *values* against *times*.
+    """Save a line plot of *values* against *times*, labelled *xlabel*.
 
     *values* may be a 1-D array (single line) or a dict mapping region
     names to 1-D arrays (one labelled line per region).
@@ -442,7 +449,7 @@ def time_series(
         plot_title = f"{title} (raw + {running_mean_steps}-step mean)"
     ax.set_title(plot_title, fontsize=11)
     ax.set_ylabel(ylabel)
-    ax.set_xlabel("time")
+    ax.set_xlabel(xlabel)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     _save(fig, output_path, dpi)
@@ -456,13 +463,23 @@ def _make_norm(cmap: str, vmin: float, vmax: float, n_levels: int) -> mcolors.Bo
 
 
 def _rolling_mean(values: np.ndarray, window: int) -> np.ndarray:
-    """Centred N-point rolling mean with edge padding to preserve array length."""
+    """Centred N-point rolling mean, NaN where the full window doesn't fit.
+
+    Keeps the input's length so it plots against the same x values. The
+    edges are left NaN (not padded): padding repeats the first/last value,
+    which for seasonal data is one season, and visibly drags the mean at
+    both ends of the series.
+    """
+    values = values.astype(float)
     if window <= 1:
-        return values.astype(float)
-    kernel = np.ones(window) / window
+        return values
+    result = np.full_like(values, np.nan)
+    if len(values) < window:
+        return result
     half = window // 2
-    padded = np.pad(values.astype(float), (half, window - 1 - half), mode="edge")
-    return np.convolve(padded, kernel, mode="valid")
+    valid = np.convolve(values, np.ones(window) / window, mode="valid")
+    result[half:half + len(valid)] = valid
+    return result
 
 
 def _clean_number(value: float, _pos=None) -> str:

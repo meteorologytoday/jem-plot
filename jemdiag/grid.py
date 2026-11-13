@@ -6,8 +6,10 @@ Different jem components describe their grids differently:
 - ``ocn`` uses dims ``(longitude, latitude, depth)`` with no coordinate
   values (treated as plain integer indices for now — see
   :mod:`jemdiag.data_loader`).
-- ``fakelnd`` uses dims ``(longitude, latitude)`` plus 2D curvilinear
-  coordinates ``longitude2D``/``latitude2D``.
+- ``lnd`` uses dims ``(lon, lat)`` plus a soil ``layer`` dim on its
+  soil-water variables; ``seaice`` uses ``(lon, lat)`` only.
+- 2D curvilinear coordinates (``longitude2D``/``latitude2D``-style, as
+  written by the retired ``fakelnd`` component) are still honored.
 
 These helpers let the plotting and selection code work with any of the
 above without hardcoding variable- or component-specific dimension names.
@@ -16,7 +18,10 @@ above without hardcoding variable- or component-specific dimension names.
 import numpy as np
 
 HORIZONTAL_DIM_PAIRS = [("lon", "lat"), ("longitude", "latitude")]
-VERTICAL_DIMS = ["level", "depth"]
+# ``layer`` is lnd's soil layer: not a physical height/depth axis, but
+# treating it as "the vertical dim" lets the usual `level` selection
+# (mean / index / slice) reduce it like any other.
+VERTICAL_DIMS = ["level", "depth", "layer"]
 
 
 def horizontal_dims(da):
@@ -30,7 +35,7 @@ def horizontal_dims(da):
 
 
 def vertical_dim(da):
-    """Return the vertical dimension name (``level``/``depth``), or ``None``."""
+    """Return the vertical dimension name (see :data:`VERTICAL_DIMS`), or ``None``."""
     for dim in VERTICAL_DIMS:
         if dim in da.dims:
             return dim
@@ -38,7 +43,7 @@ def vertical_dim(da):
 
 
 def horizontal_coords(da, x_dim, y_dim):
-    """Return ``(x, y, is_2d)`` coordinate arrays suitable for ``pcolormesh``.
+    """Return ``(x, y, is_2d)`` coordinate arrays suitable for ``contourf``/``pcolormesh``.
 
     If 2D curvilinear coordinates (e.g. ``longitude2D``/``latitude2D``) are
     present, they are used (transposed to ``(y_dim, x_dim)`` order).

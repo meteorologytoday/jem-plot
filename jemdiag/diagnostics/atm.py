@@ -230,14 +230,16 @@ def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
 
         name, units = _var_label(da)
         out_path = _out_path(output_dir, "atm", "timeseries", varname, out_cfg["format"])
+        times, time_label = selection.time_axis(da1d)
         plot_utils.time_series(
-            times=da1d["time"].values,
+            times=times,
             values=np.asarray(da1d.values, dtype=float),
             title=f"Atmos domain-mean {name}",
             ylabel=units or str(varname),
             output_path=out_path,
             dpi=out_cfg["dpi"],
             running_mean_steps=running_mean_steps,
+            xlabel=time_label,
         )
         print(f"  [atm/timeseries] saved {out_path}")
 

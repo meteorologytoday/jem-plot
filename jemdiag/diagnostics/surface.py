@@ -1,15 +1,20 @@
 """
-fakelnd diagnostic plots.
+Diagnostic plots shared by the 2D surface components, ``lnd`` and ``seaice``.
 
-fakelnd has real 2D curvilinear coordinates (``longitude2D``/``latitude2D``,
-matching the atm lon/lat grid) but no vertical dimension, so only these
-diag_types apply:
+Both live on the atm horizontal grid with real ``lon``/``lat`` coordinates.
+``seaice`` has no vertical dimension; ``lnd``'s soil-water variables carry
+a soil ``layer`` dim, reduced by the diag_type's ``level`` setting
+(``"mean"`` if omitted) like any other vertical dim. Supported diag_types:
 
   map_2d      — global (cartopy) map per variable in
-                config[diagnostics][fakelnd][map_2d][vars]
+                config[diagnostics][<component>][map_2d][vars]
   timeseries  — area-weighted domain-mean time series
+
+Each component module (:mod:`.lnd`, :mod:`.seaice`) is a thin
+:func:`make_component` call, so the two can't drift apart.
 """
 
+from functools import partial
 from pathlib import Path
 from typing import Callable
 
@@ -18,34 +23,29 @@ import numpy as np
 from jemdiag import grid, plot_utils, selection
 
 
-def run(diag_type: str, ds, config: dict, output_dir: Path) -> None:
-    handler = HANDLERS.get(diag_type)
-    if handler is None:
-        return
-    handler(ds, config, output_dir)
-
-
 def _var_label(da) -> tuple[str, str]:
     name = da.attrs.get("description") or da.attrs.get("long_name") or da.name
     units = da.attrs.get("units", "")
     return str(name), units
 
 
-def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
-    diag_cfg = config["diagnostics"]["fakelnd"].get("map_2d", {})
+def _run_map_2d(component: str, title_prefix: str, ds, config: dict, output_dir: Path) -> None:
+    diag_cfg = config["diagnostics"][component].get("map_2d", {})
     out_cfg = config["output"]
-    grid_cfg = config.get("grids", {}).get("fakelnd", {})
+    grid_cfg = config.get("grids", {}).get(component, {})
     projection = grid_cfg.get("projection", "PlateCarree")
     central_longitude = plot_utils.resolve_central_longitude(
         diag_cfg, config["diagnostics"]
     )
     coastlines = plot_utils.resolve_coastlines(diag_cfg, config["diagnostics"])
     time_args = selection.resolve_time_spec(diag_cfg, config["diagnostics"])
+    level_arg = diag_cfg.get("level", "mean")
     var_opts: dict = diag_cfg.get("var_opts", {})
+    tag = f"[{component}/map_2d]"
 
     for varname in diag_cfg.get("vars", []):
         if varname not in ds:
-            print(f"  [fakelnd/map_2d] skipping '{varname}' — not in dataset")
+            print(f"  {tag} skipping '{varname}' — not in dataset")
             continue
         da = ds[varname]
         opts = var_opts.get(varname, {})
@@ -53,9 +53,9 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
 
         for time_arg in time_args:
             try:
-                da2d = selection.reduce_to_map(da, time_arg, "mean")
+                da2d = selection.reduce_to_map(da, time_arg, level_arg)
             except (ValueError, KeyError) as exc:
-                print(f"  [fakelnd/map_2d] skipping '{varname}': {exc}")
+                print(f"  {tag} skipping '{varname}': {exc}")
                 continue
 
             x_dim, y_dim = grid.horizontal_dims(da2d)
@@ -64,9 +64,9 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
 
             time_label = selection.time_label(time_arg)
             suffix = time_label if len(time_args) > 1 else None
-            title = f"fakelnd {name} ({time_label})"
+            title = f"{title_prefix} {name} ({time_label})"
             out_path = _out_path(
-                output_dir, "fakelnd", "map_2d", varname, out_cfg["format"], time_suffix=suffix
+                output_dir, component, "map_2d", varname, out_cfg["format"], time_suffix=suffix
             )
             plot_utils.global_map(
                 data=da2d,
@@ -85,38 +85,42 @@ def _run_map_2d(ds, config: dict, output_dir: Path) -> None:
                 central_longitude=central_longitude,
                 coastlines=coastlines,
             )
-            print(f"  [fakelnd/map_2d] saved {out_path}")
+            print(f"  {tag} saved {out_path}")
 
 
-def _run_timeseries(ds, config: dict, output_dir: Path) -> None:
-    diag_cfg = config["diagnostics"]["fakelnd"].get("timeseries", {})
+def _run_timeseries(component: str, title_prefix: str, ds, config: dict, output_dir: Path) -> None:
+    diag_cfg = config["diagnostics"][component].get("timeseries", {})
     out_cfg = config["output"]
+    level_arg = diag_cfg.get("level", "mean")
     region = diag_cfg.get("region")
     running_mean_steps = diag_cfg.get("running_mean_steps")
+    tag = f"[{component}/timeseries]"
 
     for varname in diag_cfg.get("vars", []):
         if varname not in ds:
-            print(f"  [fakelnd/timeseries] skipping '{varname}' — not in dataset")
+            print(f"  {tag} skipping '{varname}' — not in dataset")
             continue
         da = ds[varname]
         try:
-            da1d = selection.reduce_to_timeseries(da, "mean", region)
+            da1d = selection.reduce_to_timeseries(da, level_arg, region)
         except ValueError as exc:
-            print(f"  [fakelnd/timeseries] skipping '{varname}': {exc}")
+            print(f"  {tag} skipping '{varname}': {exc}")
             continue
 
         name, units = _var_label(da)
-        out_path = _out_path(output_dir, "fakelnd", "timeseries", varname, out_cfg["format"])
+        out_path = _out_path(output_dir, component, "timeseries", varname, out_cfg["format"])
+        times, time_label = selection.time_axis(da1d)
         plot_utils.time_series(
-            times=da1d["time"].values,
+            times=times,
             values=np.asarray(da1d.values, dtype=float),
-            title=f"fakelnd domain-mean {name}",
+            title=f"{title_prefix} domain-mean {name}",
             ylabel=units or str(varname),
             output_path=out_path,
             dpi=out_cfg["dpi"],
             running_mean_steps=running_mean_steps,
+            xlabel=time_label,
         )
-        print(f"  [fakelnd/timeseries] saved {out_path}")
+        print(f"  {tag} saved {out_path}")
 
 
 def _out_path(
@@ -133,7 +137,21 @@ def _out_path(
     return output_dir / component / diag_type / f"{safe_var}.{fmt}"
 
 
-HANDLERS: dict[str, Callable] = {
-    "map_2d": _run_map_2d,
-    "timeseries": _run_timeseries,
-}
+def make_component(component: str, title_prefix: str) -> tuple[Callable, dict[str, Callable]]:
+    """Return ``(run, HANDLERS)`` for a surface component.
+
+    *component* is the config/output key (``"lnd"``); *title_prefix* starts
+    every figure title (``"Land"``).
+    """
+    handlers: dict[str, Callable] = {
+        "map_2d": partial(_run_map_2d, component, title_prefix),
+        "timeseries": partial(_run_timeseries, component, title_prefix),
+    }
+
+    def run(diag_type: str, ds, config: dict, output_dir: Path) -> None:
+        handler = handlers.get(diag_type)
+        if handler is None:
+            return
+        handler(ds, config, output_dir)
+
+    return run, handlers

@@ -232,6 +232,17 @@ def reduce_to_meridional_profile(da, time_arg):
     return da.mean(dim=x_dim, keep_attrs=True)
 
 
+def time_axis(da):
+    """Return ``(values, label)`` for the x-axis of a time series of ``da``.
+
+    Uses the ``model_year`` coordinate when the loader could derive one
+    (see :mod:`jemdiag.data_loader`), else the raw record index.
+    """
+    if "model_year" in da.coords:
+        return da["model_year"].values, "model year"
+    return da["time"].values, "record index"
+
+
 def reduce_to_timeseries(da, level_arg, region=None):
     """Reduce to a 1D ``(time,)`` series for :func:`jemdiag.plot_utils.time_series`."""
     da = select_along(da, grid.vertical_dim(da), level_arg)

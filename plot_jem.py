@@ -20,13 +20,14 @@ from pathlib import Path
 import yaml
 
 from jemdiag import data_loader
-from jemdiag.diagnostics import atm, ocn, fakelnd
+from jemdiag.diagnostics import atm, lnd, ocn, seaice
 
 # Registry: component name -> module with a HANDLERS dict and run() function.
 COMPONENT_MODULES = {
     "atm": atm,
     "ocn": ocn,
-    "fakelnd": fakelnd,
+    "lnd": lnd,
+    "seaice": seaice,
 }
 
 ALL_DIAG_TYPES = [
@@ -153,7 +154,9 @@ def cmd_run(args) -> int:
 
     print(f"Loading data for experiment '{exp_name}' from {config['data']['run_dir']} ...")
     try:
-        data = data_loader.load_all(config, diag_types=args.diag_types)
+        data = data_loader.load_all(
+            config, diag_types=args.diag_types, components=args.components
+        )
     except FileNotFoundError as exc:
         print(f"Error loading data: {exc}", file=sys.stderr)
         return 1
